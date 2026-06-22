@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>脸谱大师 - 手势抓取游戏</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: "PingFang SC","Microsoft YaHei",sans-serif; }
+
+#video { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; transform: scaleX(-1); z-index: 0; }
+
+#overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; pointer-events: none; }
+
+#hand-indicator {
+  position: fixed; z-index: 8; pointer-events: none; display: none;
+  width: 60px; height: 60px;
+  border-radius: 50%; border: 3px solid #FFD700;
+  background: rgba(255,215,0,0.15);
+  transition: border-color 0.15s, background 0.15s, transform 0.15s;
+  transform: translate(-50%, -50%);
+}
+#hand-indicator.grabbing {
+  border-color: #FF4444; background: rgba(255,68,68,0.25);
+  transform: translate(-50%, -50%) scale(1.2);
+}
+#hand-icon {
+  position: fixed; z-index: 9; pointer-events: none; display: none;
+  font-size: 2rem; transform: translate(-50%, -50%);
+  filter: drop-shadow(0 2px 8px rgba(0,0,0,0.9));
+  user-select: none;
+}
+
+#catch-toast {
+  position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%) translateY(20px);
+  background: rgba(0,0,0,0.85); border: 2px solid #FFD700;
+  border-radius: 20px; padding: 16px 32px;
+  color: #FFD700; font-size: 1.3rem; z-index: 20;
+  display: none; align-items: center; gap: 16px;
+  box-shadow: 0 0 30px rgba(255,215,0,0.4);
+  opacity: 0; transition: opacity 0.3s, transform 0.3s;
+}
+#catch-toast.show { display: flex; opacity: 1; transform: translateX(-50%) translateY(0); }
+#catch-toast .mask-icon { width: 60px; height: 60px; }
+#catch-toast .msg { line-height: 1.5; }
+#catch-toast .msg .highlight { color: #FF6B00; font-weight: bold; font-size: 1.5rem; }
+
+#score-bar {
+  position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+  background: rgba(0,0,0,0.7); border: 2px solid #FFD700;
+  border-radius: 40px; padding: 8px 30px;
+  color: #FFD700; font-size: 1.2rem; z-index: 5;
+  display: none; align-items: center; gap: 20px;
+}
+#caught-name {
+  color: #FF6B00; font-size: 1rem; display: none;
+}
+
+#hint {
+  position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+  background: rgba(0,0,0,0.7); color: #FFD700; padding: 12px 28px;
+  border-radius: 30px; font-size: 1.1rem; z-index: 5; display: none;
+  border: 1px solid rgba(255,215,0,0.3); text-align: center;
+}
+
+#start-screen {
+  position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+  background: radial-gradient(ellipse at center, rgba(20,10,0,0.95), rgba(0,0,0,0.98));
+  z-index: 100; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; color: #fff;
+}
+#start-screen h1 {
+  font-size: 2.8rem; color: #FFD700;
+  text-shadow: 0 0 20px #FF6B00, 0 0 40px #FF6B00;
+  margin-bottom: 1rem; letter-spacing: 0.2em;
+}
+#start-screen p { font-size: 1.1rem; color: #ccc; margin-bottom: 0.5rem; line-height: 1.6; }
+#start-btn {
+  margin-top: 2rem; padding: 1rem 3rem;
+  font-size: 1.5rem; background: linear-gradient(135deg, #FF6B00, #FFD700);
+  color: #000; border: none; border-radius: 50px; cursor: pointer;
+  font-weight: bold; letter-spacing: 0.1em;
+  box-shadow: 0 0 30px rgba(255,165,0,0.5);
+  transition: transform 0.2s;
+}
+#start-btn:hover { transform: scale(1.08); }
+
+#win-screen {
+  position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+  background: rgba(0,0,0,0.75); z-index: 200;
+  display: none; flex-direction: column; align-items: center; justify-content: center;
+}
+#win-msg {
+  font-size: 3rem; color: #FFD700; font-weight: bold;
+  text-shadow: 0 0 30px #FF6B00, 0 0 60px #FF6B00;
+  animation: pulse 1s infinite alternate;
+}
+#win-sub { font-size: 1.3rem; color: #eee; margin: 1rem 0 2rem; }
+#replay-btn {
+  padding: 0.8rem 2.5rem; font-size: 1.2rem;
+  background: linear-gradient(135deg, #FF6B00, #FFD700);
+  color: #000; border: none; border-radius: 40px; cursor: pointer;
+  font-weight: bold; box-shadow: 0 0 20px rgba(255,165,0,0.5);
+}
+
+@keyframes pulse { from { transform: scale(1); } to { transform: scale(1.06); } }
+@keyframes fadeInOut { 0% { opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes caughtAnim {
+  0% { opacity: 1; transform: scale(1); }
+  40% { opacity: 0.7; transform: scale(1.4); }
+  100% { opacity: 0; transform: scale(0.3); }
+}
+@keyframes sparkle {
+  0% { opacity: 1; transform: translate(0,0) scale(0); }
+  50% { opacity: 1; transform: scale(1.5); }
+  100% { opacity: 0; transform: scale(2); }
+}
+</style>
+</head>
+<body>
+
+<video id="video" autoplay muted playsinline></video>
+<canvas id="overlay"></canvas>
+<div id="hand-indicator"></div>
+<div id="hand-icon">✋</div>
+
+<div id="score-bar">
+  <span>已抓：<span id="caught-count">0</span> / <span id="total-count">8</span></span>
+  <span id="caught-name"></span>
+</div>
+<div id="hint">✊ 握拳或点击抓取脸谱 · 张手移动</div>
+
+<div id="catch-toast">
+  <div class="mask-icon" id="toast-mask-icon"></div>
+  <div class="msg">恭喜您成功抓到一个<br><span class="highlight" id="toast-mask-name"></span></div>
+</div>
+
+<div id="win-screen">
+  <div id="win-msg">🎉 恭喜你成功通关！</div>
+  <div id="win-sub">你已集齐所有脸谱，成为脸谱大师！</div>
+  <button id="replay-btn" onclick="restartGame()">再玩一次</button>
+</div>
+
+<div id="start-screen">
+  <h1>🎭 脸谱大师</h1>
+  <p>不同样式的京剧脸谱在屏幕中游走</p>
+  <p>将手移到脸谱上方握拳即可抓取</p>
+  <p>也可用鼠标点击抓取 · 集齐全部通关</p>
+  <button id="start-btn" onclick="startGame()">开始游戏</button>
+</div>
+
+<script>
+// ===== 脸谱SVG数据（Q版卡通风格） =====
+const MASKS = [
+  // ── 关羽：红脸武将，凤翅盔，丹凤眼 ──
+  { name:"关羽", color:"#CC0000", svg:`<svg viewBox="0 0 120 160" xmlns="http://www.w3.org/2000/svg"><ellipse cx="60" cy="92" rx="46" ry="42" fill="#FFF0E8" stroke="#3D2B1F" stroke-width="3"/><ellipse cx="36" cy="88" rx="10" ry="7" fill="#FF9EB5" opacity="0.7"/><ellipse cx="84" cy="88" rx="10" ry="7" fill="#FF9EB5" opacity="0.7"/><path d="M44 80 Q50 76 56 80" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M64 80 Q70 76 76 80" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M52 98 Q60 103 68 98" stroke="#3D2B1F" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M20 55 Q30 40 45 52 Q60 38 75 52 Q90 40 100 55 Q95 65 85 58 Q72 68 60 62 Q48 68 35 58 Q25 65 20 55Z" fill="#CC0000" stroke="#8B0000" stroke-width="1.5"/><ellipse cx="60" cy="54" rx="34" ry="26" fill="#DD2222"/><path d="M32 48 Q60 36 88 48" stroke="#FFD700" stroke-width="2.5" fill="none"/><path d="M38 42 Q60 32 82 42" stroke="#FFD700" stroke-width="1.5" fill="none"/><ellipse cx="43" cy="58" rx="11" ry="9" fill="#1a1a1a"/><ellipse cx="77" cy="58" rx="11" ry="9" fill="#1a1a1a"/><ellipse cx="44" cy="57" rx="6" ry="6" fill="#fff"/><ellipse cx="78" cy="57" rx="6" ry="6" fill="#fff"/><circle cx="46" cy="56" r="3.5" fill="#1a1a1a"/><circle cx="80" cy="56" r="3.5" fill="#1a1a1a"/><circle cx="47" cy="55" r="1.2" fill="#fff"/><circle cx="81" cy="55" r="1.2" fill="#fff"/><path d="M28 52 Q38 46 50 53" stroke="#2a1a0a" stroke-width="5" fill="none" stroke-linecap="round"/><path d="M70 53 Q82 46 92 52" stroke="#2a1a0a" stroke-width="5" fill="none" stroke-linecap="round"/><path d="M54 72 Q60 78 66 72" stroke="#FFD700" stroke-width="2" fill="none"/><path d="M22 66 Q18 78 22 88" stroke="#FFD700" stroke-width="1.8" fill="none"/><path d="M98 66 Q102 78 98 88" stroke="#FFD700" stroke-width="1.8" fill="none"/><path d="M24 86 Q60 96 96 86" stroke="#6a1a0a" stroke-width="3" fill="none"/><path d="M28 93 Q60 102 92 93" stroke="#6a1a0a" stroke-width="2" fill="none"/><path d="M14 30 L8 8 L22 18 Z" fill="#2a1a0a"/><path d="M106 30 L112 8 L98 18 Z" fill="#2a1a0a"/><path d="M12 28 Q8 15 18 6 Q30 0 42 10 Q50 18 48 28" fill="none" stroke="#3D2B1F" stroke-width="2.5"/><path d="M108 28 Q112 15 102 6 Q90 0 78 10 Q70 18 72 28" fill="none" stroke="#3D2B1F" stroke-width="2.5"/><path d="M16 24 Q14 14 24 8" stroke="#3D2B1F" stroke-width="2" fill="none"/><path d="M104 24 Q106 14 96 8" stroke="#3D2B1F" stroke-width="2" fill="none"/><circle cx="60" cy="26" r="7" fill="#FF4444" stroke="#CC0000" stroke-width="1.5"/><circle cx="60" cy="26" r="3" fill="#FFD700"/></svg>` },
+  // ── 张飞：黑脸猛将，豹头环眼 ──
+  { name:"张飞", color:"#2D2D3A", svg:`<svg viewBox="0 0 120 160" xmlns="http://www.w3.org/2000/svg"><ellipse cx="60" cy="92" rx="46" ry="42" fill="#FFF0E8" stroke="#3D2B1F" stroke-width="3"/><ellipse cx="36" cy="88" rx="10" ry="7" fill="#FF9EB5" opacity="0.7"/><ellipse cx="84" cy="88" rx="10" ry="7" fill="#FF9EB5" opacity="0.7"/><path d="M44 80 Q51 74 57 81" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M63 81 Q69 74 76 80" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M52 97 Q60 105 68 97" stroke="#3D2B1F" stroke-width="2.5" fill="none" stroke-linecap="round"/><path d="M18 54 Q30 38 46 52 Q60 36 74 52 Q90 38 102 54 Q94 66 84 58 Q72 70 60 62 Q48 70 36 58 Q26 66 18 54Z" fill="#2D2D3A" stroke="#1a1a2e" stroke-width="1.5"/><ellipse cx="60" cy="54" rx="36" ry="28" fill="#3a3a4e"/><path d="M26 46 Q60 32 94 46" stroke="#FFD700" stroke-width="2.5" fill="none"/><circle cx="60" cy="33" r="7" fill="none" stroke="#FFD700" stroke-width="2"/><ellipse cx="41" cy="58" rx="13" ry="11" fill="#CC0000"/><ellipse cx="79" cy="58" rx="13" ry="11" fill="#CC0000"/><ellipse cx="41" cy="58" rx="8" ry="8" fill="#111"/><ellipse cx="79" cy="58" rx="8" ry="8" fill="#111"/><circle cx="43" cy="56" r="2.8" fill="#fff"/><circle cx="81" cy="56" r="2.8" fill="#fff"/><path d="M24 50 Q38 40 54 51" stroke="#111" stroke-width="7" fill="none" stroke-linecap="round"/><path d="M66 51 Q82 40 96 50" stroke="#111" stroke-width="7" fill="none" stroke-linecap="round"/><ellipse cx="60" cy="76" rx="9" ry="6" fill="#222"/><path d="M36 92 Q60 106 84 92" fill="#CC0000" stroke="#111" stroke-width="2"/><path d="M42 92 Q60 101 78 92" fill="#fff"/><path d="M14 68 Q20 85 16 100" stroke="#444" stroke-width="5.5" fill="none" stroke-linecap="round"/><path d="M106 68 Q100 85 104 100" stroke="#444" stroke-width="5.5" fill="none" stroke-linecap="round"/><path d="M28 42 Q35 34 44 40" fill="#888899"/><path d="M92 42 Q85 34 76 40" fill="#888899"/><circle cx="39" cy="39" r="4" fill="#FF6B00" stroke="#CC4400" stroke-width="1"/><circle cx="81" cy="39" r="4" fill="#FF6B00" stroke="#CC4400" stroke-width="1"/></svg>` },
+  // ── 孙悟空：猴王脸，金箍，火眼金睛 ──
+  { name:"孙悟空", color:"#F5E8C0", svg:`<svg viewBox="0 0 120 160" xmlns="http://www.w3.org/2000/svg"><ellipse cx="60" cy="92" rx="46" ry="42" fill="#FFF0E8" stroke="#3D2B1F" stroke-width="3"/><ellipse cx="34" cy="87" rx="11" ry="8" fill="#FF9EB5" opacity="0.7"/><ellipse cx="86" cy="87" rx="11" ry="8" fill="#FF9EB5" opacity="0.7"/><path d="M42 79 Q49 73 56 80" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M64 80 Q71 73 78 79" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><ellipse cx="60" cy="95" rx="7" ry="5" fill="#FF8888"/><circle cx="55" cy="94" r="2.5" fill="#CC6666"/><circle cx="65" cy="94" r="2.5" fill="#CC6666"/><path d="M16 54 Q28 40 44 52 Q58 36 72 52 Q88 40 100 54 Q92 67 82 59 Q70 71 60 64 Q50 71 38 59 Q28 67 16 54Z" fill="#F5E8C0" stroke="#D4C4A0" stroke-width="1.5"/><ellipse cx="60" cy="55" rx="35" ry="27" fill="#FFFFF0"/><rect x="17" y="40" width="86" height="13" rx="6.5" fill="#FFD700" stroke="#CC9900" stroke-width="1.5"/><ellipse cx="60" cy="46" rx="9" ry="5.5" fill="#FF6B00"/><ellipse cx="41" cy="59" rx="13" ry="11" fill="#FF4444"/><ellipse cx="79" cy="59" rx="13" ry="11" fill="#FF4444"/><ellipse cx="41" cy="59" rx="8" ry="8" fill="#FFD700"/><ellipse cx="79" cy="59" rx="8" ry="8" fill="#FFD700"/><circle cx="41" cy="59" r="4.5" fill="#333"/><circle cx="79" cy="59" r="4.5" fill="#333"/><circle cx="43" cy="57" r="1.8" fill="#fff"/><circle cx="81" cy="57" r="1.8" fill="#fff"/><path d="M25 53 Q38 44 53 53" stroke="#333" stroke-width="5" fill="none" stroke-linecap="round"/><path d="M67 53 Q82 44 95 53" stroke="#333" stroke-width="5" fill="none" stroke-linecap="round"/><path d="M34 90 Q60 104 86 90" fill="#DD4444" stroke="#992222" stroke-width="1.8"/><path d="M39 90 Q60 101 81 90" fill="#fff"/><ellipse cx="24" cy="86" rx="11" ry="8" fill="#FF9999" opacity="0.5"/><ellipse cx="96" cy="86" rx="11" ry="8" fill="#FF9999" opacity="0.5"/><path d="M14 56 Q10 70 14 84" stroke="#998877" stroke-width="4" fill="none" stroke-linecap="round"/><path d="M106 56 Q110 70 106 84" stroke="#998877" stroke-width="4" fill="none" stroke-linecap="round"/><path d="M48 68 Q60 82 72 68" fill="none" stroke="#CC3333" stroke-width="2.5"/><path d="M52 71 Q60 79 68 71" fill="none" stroke="#CC3333" stroke-width="1.5"/><path d="M56 73 Q60 77 64 73" fill="#FFE080"/></svg>` },
+  // ── 曹操：白脸奸雄，细眉 ──
+  { name:"曹操", color:"#E8DCC8", svg:`<svg viewBox="0 0 120 160" xmlns="http://www.w3.org/2000/svg"><ellipse cx="60" cy="92" rx="46" ry="42" fill="#FFF0E8" stroke="#3D2B1F" stroke-width="3"/><ellipse cx="36" cy="88" rx="10" ry="7" fill="#FF9EB5" opacity="0.7"/><ellipse cx="84" cy="88" rx="10" ry="7" fill="#FF9EB5" opacity="0.7"/><path d="M44 80 Q50 76 56 80" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M64 80 Q70 76 76 80" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M54 97 Q60 102 66 97" stroke="#C4956A" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M18 54 Q30 40 45 52 Q60 37 75 52 Q90 40 102 54 Q94 66 84 58 Q72 69 60 62 Q48 69 36 58 Q26 66 18 54Z" fill="#E8DCC8" stroke="#D4C4A8" stroke-width="1.5"/><ellipse cx="60" cy="55" rx="35" ry="27" fill="#F0E8D8"/><path d="M34 48 Q60 35 86 48" stroke="#C8A878" stroke-width="2" fill="none"/><path d="M40 42 Q60 31 80 42" stroke="#C8A878" stroke-width="1.3" fill="none"/><path d="M28 62 Q40 55 54 63 Q40 70 28 62Z" fill="#3a2a1a"/><path d="M66 63 Q80 55 92 62 Q80 70 66 63Z" fill="#3a2a1a"/><ellipse cx="41" cy="62" rx="5.5" ry="4" fill="#4a3a2a"/><ellipse cx="79" cy="62" rx="5.5" ry="4" fill="#4a3a2a"/><circle cx="43" cy="61" r="1.5" fill="#fff"/><circle cx="81" cy="61" r="1.5" fill="#fff"/><path d="M27 54 Q40 47 54 55" stroke="#3a2a1a" stroke-width="3" fill="none"/><path d="M66 55 Q80 47 93 54" stroke="#3a2a1a" stroke-width="3" fill="none"/><path d="M50 76 Q60 83 70 76" stroke="#A07850" stroke-width="2" fill="none"/><path d="M44 91 Q60 97 76 91" stroke="#A07850" stroke-width="2.5" fill="none"/><path d="M48 95 Q60 99 72 95" stroke="#CC9966" stroke-width="1.8" fill="none"/><path d="M20 72 Q24 83 20 93" stroke="#C8A878" stroke-width="3" fill="none" stroke-linecap="round"/><path d="M100 72 Q96 83 100 93" stroke="#C8A878" stroke-width="3" fill="none" stroke-linecap="round"/><rect x="24" y="28" width="72" height="16" rx="5" fill="#2a2a1a" stroke="#1a1a0a" stroke-width="1"/><rect x="34" y="23" width="52" height="9" rx="4.5" fill="#3a3a2a"/><ellipse cx="60" cy="27" r="5" fill="#FFD700" stroke="#CC9900" stroke-width="1"/><path d="M28 24 Q60 10 92 24" fill="none" stroke="#8a6a3a" stroke-width="3.5"/><path d="M42 18 L60 8 L78 18" fill="none" stroke="#FFD700" stroke-width="2"/><circle cx="60" cy="8" r="4" fill="#FFD700"/></svg>` },
+  // ── 包拯：黑面包公，月牙额头，乌纱帽 ──
+  { name:"包拯", color="#1a1a2e", svg:`<svg viewBox="0 0 120 160" xmlns="http://www.w3.org/2000/svg"><ellipse cx="60" cy="92" rx="46" ry="42" fill="#FFF0E8" stroke="#3D2B1F" stroke-width="3"/><ellipse cx="36" cy="88" rx="10" ry="7" fill="#FF9EB5" opacity="0.7"/><ellipse cx="84" cy="88" rx="10" ry="7" fill="#FF9EB5" opacity="0.7"/><path d="M44 80 Q50 75 56 80" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M64 80 Q70 75 76 80" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M52 97 Q60 104 68 97" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><rect x="18" y="44" width="84" height="22" rx="4" fill="#1a1a22" stroke="#0d0d18" stroke-width="1.5"/><rect x="28" y="36" width="64" height="14" rx="5" fill="#222238"/><path d="M20 56 Q32 46 46 56 Q60 42 74 56 Q88 46 100 56 Q92 68 82 60 Q70 72 60 64 Q50 72 38 60 Q28 68 20 56Z" fill="#EEE8F0" stroke="#ccccee" stroke-width="1.5"/><ellipse cx="60" cy="58" rx="34" ry="24" fill="#F5F0F8"/><path d="M52 48 Q60 42 68 48" stroke="#C0C0C0" stroke-width="3" fill="none"/><path d="M54 46 Q60 40 66 46" stroke="#aaaacc" stroke-width="2" fill="none"/><path d="M48 50 L60 44 L72 50" fill="#ddddee" stroke="#bbbccd" stroke-width="1"/><circle cx="60" cy="44" r="5" fill="none" stroke="#9999aa" stroke-width="1.8"/><ellipse cx="42" cy="64" rx="12" ry="10" fill="#333355"/><ellipse cx="78" cy="64" rx="12" ry="10" fill="#333355"/><ellipse cx="42" cy="64" rx="7" ry="7" fill="#1a1a3a"/><ellipse cx="78" cy="64" rx="7" ry="7" fill="#1a1a3a"/><circle cx="44" cy="62" r="2.8" fill="#fff"/><circle cx="80" cy="62" r="2.8" fill="#fff"/><path d="M28 56 Q38 48 50 57" stroke="#444455" stroke-width="5.5" fill="none" stroke-linecap="round"/><path d="M70 57 Q82 48 92 56" stroke="#444455" stroke-width="5.5" fill="none" stroke-linecap="round"/><path d="M54 76 Q60 83 66 76" stroke="#888899" stroke-width="2" fill="none"/><path d="M42 91 Q60 98 78 91" stroke="#888899" stroke-width="2.5" fill="none"/><path d="M22 68 Q26 80 22 90" stroke="#444455" stroke-width="3.5" fill="none" stroke-linecap="round"/><path d="M98 68 Q94 80 98 90" stroke="#444455" stroke-width="3.5" fill="none" stroke-linecap="round"/><ellipse cx="60" cy="29" r="5" fill="#FFD700" stroke="#CC9900" stroke-width="1.2"/></svg>` },
+  // ── 窦尔敦：蓝脸英雄 ──
+  { name:"窦尔敦", color="#3355AA", svg:`<svg viewBox="0 0 120 160" xmlns="http://www.w3.org/2000/svg"><ellipse cx="60" cy="92" rx="46" ry="42" fill="#FFF0E8" stroke="#3D2B1F" stroke-width="3"/><ellipse cx="36" cy="88" rx="10" ry="7" fill="#FF9EB5" opacity="0.7"/><ellipse cx="84" cy="88" rx="10" ry="7" fill="#FF9EB5" opacity="0.7"/><path d="M44 80 Q50 75 56 80" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M64 80 Q70 75 76 80" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M52 97 Q60 104 68 97" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M18 54 Q30 38 46 52 Q60 36 74 52 Q90 38 102 54 Q94 66 84 58 Q72 70 60 62 Q48 70 36 58 Q26 66 18 54Z" fill="#3355AA" stroke="#2244AA" stroke-width="1.5"/><ellipse cx="60" cy="55" rx="35" ry="27" fill="#4466BB"/><path d="M28 46 Q60 32 92 46" stroke="#fff" stroke-width="2.5" fill="none"/><path d="M34 39 Q60 26 86 39" stroke="#fff" stroke-width="2" fill="none"/><ellipse cx="41" cy="59" rx="13" ry="11" fill="#fff"/><ellipse cx="79" cy="59" rx="13" ry="11" fill="#fff"/><ellipse cx="41" cy="59" rx="8" ry="8" fill="#1133AA"/><ellipse cx="79" cy="59" rx="8" ry="8" fill="#1133AA"/><circle cx="41" cy="59" r="4.5" fill="#111"/><circle cx="79" cy="59" r="4.5" fill="#111"/><circle cx="43" cy="57" r="1.8" fill="#fff"/><circle cx="81" cy="57" r="1.8" fill="#fff"/><path d="M27 52 Q40 44 54 53" stroke="#2244CC" stroke-width="6" fill="none" stroke-linecap="round"/><path d="M66 53 Q80 44 93 52" stroke="#2244CC" stroke-width="6" fill="none" stroke-linecap="round"/><ellipse cx="60" cy="76" rx="9" ry="6" fill="#2244AA"/><path d="M36 92 Q60 106 84 92" fill="#CC3333" stroke="#aa2222" stroke-width="2"/><path d="M42 92 Q60 102 78 92" fill="#fff"/><path d="M24 58 Q36 48 50 56 Q64 48 78 56 Q92 48 98 58" stroke="#fff" stroke-width="2.5" fill="none"/><path d="M14 70 Q20 84 16 97" stroke="#2244BB" stroke-width="5" fill="none" stroke-linecap="round"/><path d="M106 70 Q100 84 104 97" stroke="#2244BB" stroke-width="5" fill="none" stroke-linecap="round"/><circle cx="38" cy="42" r="4" fill="#FF4444" stroke="#CC2222" stroke-width="1"/><circle cx="82" cy="42" r="4" fill="#FF4444" stroke="#CC2222" stroke-width="1"/></svg>` },
+  // ── 典韦：黄脸猛将 ──
+  { name:"典韦", color:"#8B4513", svg:`<svg viewBox="0 0 120 160" xmlns="http://www.w3.org/2000/svg"><ellipse cx="60" cy="92" rx="46" ry="42" fill="#FFF0E8" stroke="#3D2B1F" stroke-width="3"/><ellipse cx="36" cy="88" rx="10" ry="7" fill="#FF9EB5" opacity="0.7"/><ellipse cx="84" cy="88" rx="10" ry="7" fill="#FF9EB5" opacity="0.7"/><path d="M42 79 Q50 73 57 80" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M63 80 Q70 73 78 79" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M52 98 Q60 106 68 98" stroke="#3D2B1F" stroke-width="2.5" fill="none" stroke-linecap="round"/><path d="M16 54 Q28 38 44 52 Q58 36 72 52 Q88 38 100 54 Q92 67 82 58 Q70 71 60 63 Q50 71 38 58 Q28 67 16 54Z" fill="#B8860B" stroke="#8B6508" stroke-width="1.5"/><ellipse cx="60" cy="54" rx="36" ry="28" fill="#CD9500"/><path d="M24 44 Q60 28 96 44" stroke="#FFD700" stroke-width="3" fill="none"/><path d="M32 36 Q60 22 88 36" stroke="#FF6600" stroke-width="2" fill="none"/><ellipse cx="41" cy="59" rx="14" ry="12" fill="#FFD700"/><ellipse cx="79" cy="59" rx="14" ry="12" fill="#FFD700"/><ellipse cx="41" cy="59" rx="9" ry="9" fill="#8B4513"/><ellipse cx="79" cy="59" rx="9" ry="9" fill="#8B4513"/><circle cx="41" cy="59" r="5" fill="#111"/><circle cx="79" cy="59" r="5" fill="#111"/><circle cx="43" cy="57" r="2" fill="#fff"/><circle cx="81" cy="57" r="2" fill="#fff"/><path d="M23 50 Q38 40 55 51" stroke="#222" stroke-width="8.5" fill="none" stroke-linecap="round"/><path d="M65 51 Q82 40 97 50" stroke="#222" stroke-width="8.5" fill="none" stroke-linecap="round"/><ellipse cx="60" cy="76" rx="11" ry="8" fill="#CC5500"/><path d="M34 94 Q60 110 86 94" fill="#990000" stroke="#660000" stroke-width="2"/><path d="M40 94 Q60 108 80 94" fill="#FF5555"/><path d="M12 68 Q18 85 14 100" stroke="#660000" stroke-width="6.5" fill="none" stroke-linecap="round"/><path d="M108 68 Q102 85 106 100" stroke="#660000" stroke-width="6.5" fill="none" stroke-linecap="round"/><circle cx="60" cy="26" r="6" fill="#FF4444" stroke="#CC2222" stroke-width="1.3"/><path d="M14 32 L6 12 L22 20 Z" fill="#5a3a1a"/><path d="M106 32 L114 12 L98 20 Z" fill="#5a3a1a"/></svg>` },
+  // ── 婵娟：花旦美人，凤冠 ──
+  { name:"婵娟", color:"#FF69B4", svg:`<svg viewBox="0 0 120 160" xmlns="http://www.w3.org/2000/svg"><ellipse cx="60" cy="92" rx="46" ry="42" fill="#FFF0E8" stroke="#3D2B1F" stroke-width="3"/><ellipse cx="34" cy="87" rx="11" ry="8" fill="#FF9EB5" opacity="0.8"/><ellipse cx="86" cy="87" rx="11" ry="8" fill="#FF9EB5" opacity="0.8"/><path d="M44 79 Q50 74 57 80" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M63 80 Q70 74 77 79" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M54 97 Q60 102 66 97" stroke="#CC6688" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M50 89 Q60 95 70 89" fill="#FF4477" stroke="#CC3366" stroke-width="1.5"/><path d="M53 89 Q60 93 67 89" fill="#FF6688"/><circle cx="60" cy="36" r="7" fill="#FF69B4" stroke="#CC4488" stroke-width="1.3"/><circle cx="60" cy="36" r="3.5" fill="#FFD700"/><path d="M46 36 Q52 28 60 32 Q68 28 74 36" stroke="#FF69B4" stroke-width="2" fill="none"/><path d="M18 52 Q30 40 44 52 Q58 38 72 52 Q86 40 98 52 Q92 64 82 57 Q70 68 60 61 Q50 68 38 57 Q28 64 18 52Z" fill="#2a1a2a" stroke="#1a0a1a" stroke-width="1"/><path d="M24 62 Q38 53 54 63 Q38 72 24 62Z" fill="#2a1a2a"/><path d="M66 63 Q82 53 96 62 Q82 72 66 63Z" fill="#2a1a2a"/><ellipse cx="40" cy="63" rx="6" ry="5" fill="#553366"/><ellipse cx="80" cy="63" rx="6" ry="5" fill="#553366"/><circle cx="42" cy="61" r="1.8" fill="#fff"/><circle cx="82" cy="61" r="1.8" fill="#fff"/><path d="M25 54 Q38 46 54 54" stroke="#2a1a2a" stroke-width="3" fill="none"/><path d="M66 54 Q82 46 95 54" stroke="#2a1a2a" stroke-width="3" fill="none"/><ellipse cx="20" cy="84" rx="13" ry="10" fill="#FFB6C1" opacity="0.6"/><ellipse cx="100" cy="84" rx="13" ry="10" fill="#FFB6C1" opacity="0.6"/><circle cx="10" cy="92" r="5" fill="#FFD700" stroke="#FF69B4" stroke-width="1.5"/><circle cx="110" cy="92" r="5" fill="#FFD700" stroke="#FF69B4" stroke-width="1.5"/><path d="M22 48 Q30 36 44 44 Q52 36 60 42 Q68 36 76 44 Q90 36 98 48" fill="none" stroke="#FFD700" stroke-width="2"/><circle cx="30" cy="42" r="5" fill="#FF4444" stroke="#CC2222" stroke-width="1"/><circle cx="90" cy="42" r="5" fill="#FF4444" stroke="#CC2222" stroke-width="1"/><circle cx="44" cy="38" r="4" fill="#44AAFF" stroke="#2288CC" stroke-width="1"/><circle cx="76" cy="38" r="4" fill="#44AAFF" stroke="#2288CC" stroke-width="1"/><circle cx="60" cy="34" r="4.5" fill="#FF4444" stroke="#CC2222" stroke-width="1"/><circle cx="36" cy="46" r="3.5" fill="#fff" stroke="#ddd" stroke-width="0.8"/><circle cx="84" cy="46" r="3.5" fill="#fff" stroke="#ddd" stroke-width="0.8"/><circle cx="50" cy="42" r="3" fill="#fff" stroke="#ddd" stroke-width="0.8"/><circle cx="70" cy="42" r="3" fill="#fff" stroke="#ddd" stroke-width="0.8"/><path d="M20 52 Q14 44 22 36" stroke="#FF69B4" stroke-width="2.5" fill="none"/><circle cx="18" cy="34" r="4" fill="#FF69B4"/><path d="M100 52 Q106 44 98 36" stroke="#FF69B4" stroke-width="2.5" fill="none"/><circle cx="102" cy="34" r="4" fill="#FF69B4"/><line x1="18" y1="38" x2="16" y2="62" stroke="#FFD700" stroke-width="1.5"/><line x1="102" y1="38" x2="104" y2="62" stroke="#FFD700" stroke-width="1.5"/><circle cx="15" cy="65" r="3" fill="#FFD700"/><circle cx="105" cy="65" r="3" fill="#FFD700"/></svg>` }
+];
+
+// ===== 游戏状态 =====
+const TOTAL = MASKS.length;
+let gameRunning = false, caughtCount = 0, gameWon = false;
+let maskObjs = [];
+let caughtMasks = []; // 已抓到的脸谱列表
+
+// ===== 手掌追踪状态 =====
+let rawHandPos = { x: -1, y: -1 };    // 原始检测位置
+let smoothHandPos = { x: -1, y: -1 };  // 平滑后位置（屏幕坐标）
+let handBlobArea = 0;
+let prevBlobArea = 0;
+let isGrabbing = false;
+let wasGrabbing = false;
+let handVisible = false;
+let handLostFrames = 0; // 手消失的帧计数
+
+// ===== 脸部追踪 =====
+let faceRegion = { cx: 0, cy: 0, w: 0, h: 0 }; // 脸部中心+尺寸（屏幕坐标）
+let faceFound = false;
+
+// ===== DOM =====
+const video = document.getElementById('video');
+const overlay = document.getElementById('overlay');
+const ctx = overlay.getContext('2d', { willReadFrequently: true });
+const handIndicator = document.getElementById('hand-indicator');
+const handIcon = document.getElementById('hand-icon');
+const gameLayer = overlay;
+
+// ===== 鼠标/触摸输入（始终同时启用） =====
+let mouseInput = { x: -1, y: -1, active: false, down: false };
+document.addEventListener('mousemove', e => {
+  mouseInput.x = e.clientX; mouseInput.y = e.clientY; mouseInput.active = true;
+});
+document.addEventListener('mousedown', e => {
+  mouseInput.down = true; mouseInput.active = true;
+});
+document.addEventListener('mouseup', e => {
+  mouseInput.down = false;
+});
+document.addEventListener('touchstart', e => {
+  const t = e.touches[0];
+  mouseInput.x = t.clientX; mouseInput.y = t.clientY; mouseInput.down = true; mouseInput.active = true;
+});
+document.addEventListener('touchmove', e => {
+  const t = e.touches[0];
+  mouseInput.x = t.clientX; mouseInput.y = t.clientY; mouseInput.active = true;
+});
+document.addEventListener('touchend', e => {
+  mouseInput.down = false;
+});
+
+function resizeCanvas() {
+  overlay.width = window.innerWidth;
+  overlay.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+// ===== 摄像头 =====
+async function initCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
+    });
+    video.srcObject = stream;
+    await video.play();
+    return true;
+  } catch(e) {
+    alert('无法获取摄像头: ' + e.message);
+    return false;
+  }
+}
+
+// ===== 肤色检测（优化版） =====
+function isSkinHSV(r, g, b) {
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const v = max / 255;
+  const delta = max - min;
+  if (delta < 10) return false;
+  const s = delta / max;
+  let h;
+  if (max === r) h = ((g - b) / delta) % 6;
+  else if (max === g) h = (b - r) / delta + 2;
+  else h = (r - g) / delta + 4;
+  h = h * 60;
+  if (h < 0) h += 360;
+  // 扩大范围，降低阈值让更多肤色通过
+  return h >= 0 && h <= 60 && s >= 0.08 && s <= 0.9 && v >= 0.18;
+}
+
+// 形态学操作：先膨胀连接碎片，再腐蚀去除噪点
+function morphClean(mask, w, h) {
+  const out = new Uint8Array(w * h);
+  // 膨胀3x3
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      if (mask[y*w+x] || mask[(y-1)*w+x] || mask[(y+1)*w+x] || mask[y*w+x-1] || mask[y*w+x+1]) {
+        out[y*w+x] = 1;
+      }
+    }
+  }
+  // 腐蚀3x3
+  const out2 = new Uint8Array(w * h);
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      if (out[y*w+x] && out[(y-1)*w+x] && out[(y+1)*w+x] && out[y*w+x-1] && out[y*w+x+1]) {
+        out2[y*w+x] = 1;
+      }
+    }
+  }
+  return out2;
+}
+
+function detectSkinBlobs() {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (vw === 0 || vh === 0) return;
+
+  const sw = window.innerWidth, sh = window.innerHeight;
+  const sampleW = 160, sampleH = 120;
+  ctx.drawImage(video, 0, 0, sampleW, sampleH);
+  const imgData = ctx.getImageData(0, 0, sampleW, sampleH);
+  const pixels = imgData.data;
+
+  // 肤色标记
+  const skinMask = new Uint8Array(sampleW * sampleH);
+  for (let i = 0; i < sampleW * sampleH; i++) {
+    const r = pixels[i*4], g = pixels[i*4+1], b = pixels[i*4+2];
+    if (isSkinHSV(r, g, b)) skinMask[i] = 1;
+  }
+
+  // 形态学清理
+  const cleaned = morphClean(skinMask, sampleW, sampleH);
+
+  // BFS找所有连通blob
+  const visited = new Uint8Array(sampleW * sampleH);
+  let blobs = [];
+
+  for (let y = 0; y < sampleH; y++) {
+    for (let x = 0; x < sampleW; x++) {
+      if (cleaned[y * sampleW + x] && !visited[y * sampleW + x]) {
+        let bx = 0, by = 0, bCount = 0;
+        let minX = x, maxX = x, minY = y, maxY = y;
+        const queue = [[x, y]];
+        visited[y * sampleW + x] = 1;
+        while (queue.length > 0) {
+          const [cx, cy] = queue.shift();
+          bx += cx; by += cy; bCount++;
+          if (cx < minX) minX = cx; if (cx > maxX) maxX = cx;
+          if (cy < minY) minY = cy; if (cy > maxY) maxY = cy;
+          const neighbors = [[cx-1,cy],[cx+1,cy],[cx,cy-1],[cx,cy+1]];
+          for (const [nx, ny] of neighbors) {
+            if (nx >= 0 && nx < sampleW && ny >= 0 && ny < sampleH
+                && cleaned[ny * sampleW + nx] && !visited[ny * sampleW + nx]) {
+              visited[ny * sampleW + nx] = 1;
+              queue.push([nx, ny]);
+            }
+          }
+        }
+        if (bCount > 30) { // 降低阈值，让手的blob更容易被检测到
+          // 镜像后屏幕坐标
+          const cx_screen = (1 - (bx / bCount) / sampleW) * sw;
+          const cy_screen = (by / bCount) / sampleH * sh;
+          // blob在视频坐标中的范围
+          const vid_cx = bx / bCount;
+          const vid_cy = by / bCount;
+          blobs.push({
+            cx: cx_screen, cy: cy_screen,
+            vidCx: vid_cx / sampleW, vidCy: vid_cy / sampleH,
+            vidMinX: minX / sampleW, vidMaxX: maxX / sampleW,
+            vidMinY: minY / sampleH, vidMaxY: maxY / sampleH,
+            area: bCount
+          });
+        }
+      }
+    }
+  }
+
+  // 按面积排序
+  blobs.sort((a, b) => b.area - a.area);
+
+  // 找脸：最大的blob，且在画面中上部区域
+  let faceBlob = null;
+  let handBlob = null;
+
+  if (blobs.length >= 1) {
+    faceBlob = blobs[0]; // 最大blob = 脸
+    // 更新脸部位置
+    const fMinX = (1 - faceBlob.vidMaxX) * sw; // 镜像
+    const fMinY = faceBlob.vidMinY * sh;
+    const fW = (faceBlob.vidMaxX - faceBlob.vidMinX) * sw;
+    const fH = (faceBlob.vidMaxY - faceBlob.vidMinY) * sh;
+    faceRegion.cx = faceBlob.cx;
+    faceRegion.cy = faceBlob.cy;
+    faceRegion.w = fW * 1.3;
+    faceRegion.h = fH * 1.5;
+    faceFound = true;
+
+    // 找手：第二大blob，或者远离脸部中心的blob
+    if (blobs.length >= 2) {
+      handBlob = blobs[1];
+    } else {
+      // 只有一个blob（脸+手合并），尝试从blob边缘找"延伸部分"
+      // 如果脸部blob面积突然大幅增大，说明手靠近了脸
+      // 此时使用脸部blob的边缘点作为手的近似位置
+      // 策略：找blob中距离中心最远的区域作为"手端"
+      handBlob = null; // 无法分离
+    }
+  }
+
+  // 更新手的检测结果
+  if (handBlob) {
+    rawHandPos.x = handBlob.cx;
+    rawHandPos.y = handBlob.cy;
+    prevBlobArea = handBlobArea;
+    handBlobArea = handBlob.area;
+    handVisible = true;
+    handLostFrames = 0;
+  } else if (faceBlob && faceBlob.area > 500 && prevBlobArea > 0) {
+    // 手可能和脸合并了——用脸部边缘作为手的位置近似
+    // 检查脸部blob是否突然变大（手靠近脸）
+    const faceAreaDelta = faceBlob.area / (faceBlob.area - handBlobArea || faceBlob.area);
+    // 用鼠标/触摸位置作为替代
+    if (mouseInput.active) {
+      rawHandPos.x = mouseInput.x;
+      rawHandPos.y = mouseInput.y;
+      handVisible = true;
+      handLostFrames = 0;
+    } else {
+      handLostFrames++;
+      if (handLostFrames > 8) {
+        handVisible = false;
+      }
+    }
+    handBlobArea = 0;
+  } else {
+    // 没有检测到任何blob
+    if (mouseInput.active) {
+      rawHandPos.x = mouseInput.x;
+      rawHandPos.y = mouseInput.y;
+      handVisible = true;
+      handLostFrames = 0;
+      handBlobArea = 0;
+    } else {
+      handLostFrames++;
+      if (handLostFrames > 5) {
+        handVisible = false;
+        handBlobArea = 0;
+      }
+    }
+  }
+
+  // ===== 平滑手位置（关键：避免跳跃和贴边缘） =====
+  const SMOOTH_FACTOR = 0.35; // 平滑系数（0=全平滑不动，1=无平滑全靠原始值）
+  if (handVisible) {
+    if (smoothHandPos.x < 0) {
+      // 首次检测，直接赋值
+      smoothHandPos.x = rawHandPos.x;
+      smoothHandPos.y = rawHandPos.y;
+    } else {
+      smoothHandPos.x += (rawHandPos.x - smoothHandPos.x) * SMOOTH_FACTOR;
+      smoothHandPos.y += (rawHandPos.y - smoothHandPos.y) * SMOOTH_FACTOR;
+    }
+    // 约束在屏幕范围内
+    smoothHandPos.x = Math.max(20, Math.min(sw - 20, smoothHandPos.x));
+    smoothHandPos.y = Math.max(20, Math.min(sh - 20, smoothHandPos.y));
+  }
+}
+
+// ===== 判断握拳（改进版） =====
+let recentMaxArea = 0;
+let areaHistory = [];
+const AREA_HISTORY_LEN = 20;
+const GRAB_THRESHOLD = 0.50;
+
+function detectGrabGesture() {
+  if (!handVisible) {
+    isGrabbing = false;
+    return;
+  }
+
+  // 鼠标/触摸的点击 = 立即抓取
+  if (mouseInput.down && mouseInput.active) {
+    isGrabbing = true;
+    return;
+  }
+
+  // 肤色检测的握拳：面积变化法
+  if (handBlobArea > 0) {
+    areaHistory.push(handBlobArea);
+    if (areaHistory.length > AREA_HISTORY_LEN) areaHistory.shift();
+    recentMaxArea = Math.max(...areaHistory);
+    if (recentMaxArea > 20 && handBlobArea < recentMaxArea * GRAB_THRESHOLD) {
+      isGrabbing = true;
+    } else {
+      isGrabbing = false;
+    }
+  } else {
+    // 没有肤色面积数据时，无法判断握拳
+    isGrabbing = false;
+  }
+}
+
+// ===== 脸谱对象 =====
+class MaskObj {
+  constructor(data, idx) {
+    this.data = data;
+    this.idx = idx;
+    this.size = 90 + Math.random() * 50;
+    this.x = Math.random() * (window.innerWidth - this.size);
+    this.y = Math.random() * (window.innerHeight - this.size);
+    this.vx = (Math.random() - 0.5) * 2.5;
+    this.vy = (Math.random() - 0.5) * 2.5;
+    this.angle = Math.random() * 360;
+    this.angleV = (Math.random() - 0.5) * 1.5;
+    this.caught = false;
+    this.catching = false;
+  }
+
+  update() {
+    if (this.caught || this.catching) return;
+    this.x += this.vx;
+    this.y += this.vy;
+    this.angle += this.angleV;
+    const sw = window.innerWidth, sh = window.innerHeight;
+    if (this.x < 0 || this.x + this.size > sw) { this.vx *= -1; this.x = Math.max(0, Math.min(sw - this.size, this.x)); }
+    if (this.y < 0 || this.y + this.size > sh) { this.vy *= -1; this.y = Math.max(0, Math.min(sh - this.size, this.y)); }
+  }
+
+  draw(ctx) {
+    if (this.caught) return;
+    ctx.save();
+    ctx.translate(this.x + this.size/2, this.y + this.size/2);
+    ctx.rotate(this.angle * Math.PI / 180);
+    ctx.globalAlpha = this.catching ? 0.5 : 1;
+    // 绘制SVG到临时canvas再画到主canvas
+    drawSVGToCtx(ctx, this.data.svg, -this.size/2, -this.size/2, this.size, this.size);
+    ctx.restore();
+  }
+
+  get cx() { return this.x + this.size / 2; }
+  get cy() { return this.y + this.size / 2; }
+
+  hitTest(px, py) {
+    const dx = px - this.cx, dy = py - this.cy;
+    return Math.sqrt(dx*dx + dy*dy) < this.size * 0.6;
+  }
+}
+
+// SVG绘制缓存
+const svgCache = {};
+function drawSVGToCtx(ctx, svgStr, x, y, w, h) {
+  if (!svgCache[svgStr]) {
+    const img = new Image();
+    const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+    svgCache[svgStr] = { img, loaded: false, url: URL.createObjectURL(blob) };
+    img.onload = () => { svgCache[svgStr].loaded = true; };
+    img.src = svgCache[svgStr].url;
+  }
+  const cached = svgCache[svgStr];
+  if (cached.loaded) {
+    ctx.drawImage(cached.img, x, y, w, h);
+  } else {
+    // SVG还没加载，画一个占位色块
+    ctx.fillStyle = MASKS.find(m => m.svg === svgStr)?.color || '#888';
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = '#fff';
+    ctx.font = `${Math.max(12, w * 0.15)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(MASKS.find(m => m.svg === svgStr)?.name || '?', x + w/2, y + h/2);
+  }
+}
+
+// ===== 抓取特效 =====
+function spawnSparkles(cx, cy) {
+  for (let i = 0; i < 10; i++) {
+    const el = document.createElement('div');
+    const colors = ['#FFD700','#FF6B00','#FF4444','#00FF88','#FF69B4'];
+    el.style.cssText = `
+      position:fixed; left:${cx}px; top:${cy}px;
+      width:12px; height:12px;
+      background:${colors[i%5]}; border-radius:50%;
+      pointer-events:none; z-index:15;
+      animation: sparkle 0.6s forwards;
+      transform: translate(${(Math.random()-0.5)*80}px, ${(Math.random()-0.5)*80}px);
+    `;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 700);
+  }
+}
+
+// ===== 抓取脸谱 =====
+let grabCooldown = 0;
+function tryGrab() {
+  if (!handVisible || !isGrabbing || wasGrabbing) return;
+  if (grabCooldown > 0) return;
+
+  const hx = smoothHandPos.x, hy = smoothHandPos.y;
+  for (const m of maskObjs) {
+    if (!m.caught && !m.catching && m.hitTest(hx, hy)) {
+      m.catching = true;
+      spawnSparkles(m.cx, m.cy);
+      grabCooldown = 15; // 15帧冷却防止连续抓取
+      setTimeout(() => {
+        m.caught = true;
+        m.catching = false;
+        caughtCount++;
+        caughtMasks.push(m.data);
+        updateUI();
+        showCatchToast(m.data);
+        if (caughtCount >= TOTAL) {
+          setTimeout(showWin, 1500);
+        }
+      }, 400);
+      break;
+    }
+  }
+}
+
+function showCatchToast(maskData) {
+  const toast = document.getElementById('catch-toast');
+  const iconEl = document.getElementById('toast-mask-icon');
+  const nameEl = document.getElementById('toast-mask-name');
+
+  // 显示脸谱缩略图
+  iconEl.innerHTML = maskData.svg;
+  nameEl.textContent = maskData.name;
+
+  toast.classList.add('show');
+  toast.style.display = 'flex';
+
+  // 2.5秒后隐藏
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => { toast.style.display = 'none'; }, 350);
+  }, 2500);
+}
+
+function updateUI() {
+  document.getElementById('caught-count').textContent = caughtCount;
+  document.getElementById('total-count').textContent = TOTAL;
+}
+
+function showWin() {
+  gameWon = true;
+  const winMsg = document.getElementById('win-msg');
+  winMsg.textContent = '🎉 恭喜你成功通关！';
+  document.getElementById('win-screen').style.display = 'flex';
+}
+
+// ===== 绘制已抓脸谱列表（右侧小图标） =====
+function drawCaughtIcons(ctx) {
+  const iconSize = 40;
+  const startX = window.innerWidth - 50;
+  for (let i = 0; i < caughtMasks.length; i++) {
+    const y = 80 + i * (iconSize + 8);
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    drawSVGToCtx(ctx, caughtMasks[i].svg, startX - iconSize, y, iconSize, iconSize);
+    ctx.restore();
+  }
+}
+
+// ===== 主循环 =====
+let frameCount = 0;
+function gameLoop() {
+  if (!gameRunning) return;
+
+  const sw = window.innerWidth, sh = window.innerHeight;
+  ctx.clearRect(0, 0, sw, sh);
+
+  // 每帧都检测肤色（提高灵敏度）
+  detectSkinBlobs();
+  detectGrabGesture();
+
+  // 冷却倒计时
+  if (grabCooldown > 0) grabCooldown--;
+
+  // 更新脸谱
+  for (const m of maskObjs) m.update();
+
+  // 绘制脸谱
+  for (const m of maskObjs) m.draw(ctx);
+
+  // 绘制已抓脸谱小图标
+  drawCaughtIcons(ctx);
+
+  // 更新手指示符（使用平滑位置）
+  if (handVisible && smoothHandPos.x > 0) {
+    handIndicator.style.display = 'block';
+    handIndicator.style.left = smoothHandPos.x + 'px';
+    handIndicator.style.top = smoothHandPos.y + 'px';
+    handIndicator.className = isGrabbing ? 'grabbing' : '';
+    handIcon.style.display = 'block';
+    handIcon.style.left = smoothHandPos.x + 'px';
+    handIcon.style.top = smoothHandPos.y + 'px';
+    handIcon.textContent = isGrabbing ? '✊' : '✋';
+    handIcon.style.color = isGrabbing ? '#FF4444' : '#FFD700';
+  } else {
+    handIndicator.style.display = 'none';
+    handIcon.style.display = 'none';
+  }
+
+  // 尝试抓取
+  tryGrab();
+  wasGrabbing = isGrabbing;
+
+  frameCount++;
+  requestAnimationFrame(gameLoop);
+}
+
+// ===== 启动游戏 =====
+async function startGame() {
+  document.getElementById('start-screen').style.display = 'none';
+  const ok = await initCamera();
+  if (!ok) { document.getElementById('start-screen').style.display = 'flex'; return; }
+
+  await new Promise(r => {
+    if (video.readyState >= 2) r();
+    else video.onloadeddata = r;
+  });
+
+  document.getElementById('score-bar').style.display = 'flex';
+  document.getElementById('hint').style.display = 'block';
+  updateUI();
+
+  maskObjs = MASKS.map((m, i) => new MaskObj(m, i));
+  gameRunning = true;
+  caughtCount = 0;
+  gameWon = false;
+  caughtMasks = [];
+  frameCount = 0;
+  areaHistory = [];
+  recentMaxArea = 0;
+  handBlobArea = 0;
+  prevBlobArea = 0;
+  smoothHandPos = { x: -1, y: -1 };
+  rawHandPos = { x: -1, y: -1 };
+  handVisible = false;
+  handLostFrames = 0;
+  isGrabbing = false;
+  wasGrabbing = false;
+  grabCooldown = 0;
+
+  // 预加载SVG图片
+  MASKS.forEach(m => drawSVGToCtx(ctx, m.svg, 0, 0, 1, 1));
+
+  gameLoop();
+  setTimeout(() => { document.getElementById('hint').style.display = 'none'; }, 5000);
+}
+
+function restartGame() {
+  gameWon = false;
+  caughtCount = 0;
+  caughtMasks = [];
+  gameRunning = false;
+  maskObjs = [];
+
+  document.getElementById('win-screen').style.display = 'none';
+  areaHistory = [];
+  recentMaxArea = 0;
+  handBlobArea = 0;
+  smoothHandPos = { x: -1, y: -1 };
+  rawHandPos = { x: -1, y: -1 };
+  handVisible = false;
+  handLostFrames = 0;
+  isGrabbing = false;
+  wasGrabbing = false;
+  grabCooldown = 0;
+
+  maskObjs = MASKS.map((m, i) => new MaskObj(m, i));
+  updateUI();
+
+  gameRunning = true;
+  gameWon = false;
+  gameLoop();
+
+  setTimeout(() => {
+    document.getElementById('hint').style.display = 'block';
+    setTimeout(() => { document.getElementById('hint').style.display = 'none'; }, 5000);
+  }, 200);
+}
+</script>
+</body>
+</html>
