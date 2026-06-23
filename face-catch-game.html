@@ -211,49 +211,53 @@ let gameRunning = false, caughtCount = 0, gameWon = false;
 let maskObjs = [];
 let caughtMasks = []; // 已抓到的脸谱列表
 
-// ===== 手掌追踪状态 =====
-let rawHandPos = { x: -1, y: -1 };    // 原始检测位置
-let smoothHandPos = { x: -1, y: -1 };  // 平滑后位置（屏幕坐标）
-let handBlobArea = 0;
-let prevBlobArea = 0;
-let isGrabbing = false;
-let wasGrabbing = false;
-let handVisible = false;
-let handLostFrames = 0; // 手消失的帧计数
+// ===== 多点手掌追踪状态 =====
+// 支持双手：handPoints数组，每项 { x, y, area, smoothX, smoothY, lostFrames, visible, grabbing, wasGrabbing, areaHistory, maxArea, cooldown }
+const MAX_HANDS = 2;
+let handPoints = [];
 
-// ===== 脸部追踪 =====
-let faceRegion = { cx: 0, cy: 0, w: 0, h: 0 }; // 脸部中心+尺寸（屏幕坐标）
-let faceFound = false;
+// ===== 鼠标/触摸输入（始终同时启用） =====
+let mouseInput = { x: -1, y: -1, active: false, down: false, wasDown: false };
+let touchPoints = []; // 多点触摸
 
 // ===== DOM =====
 const video = document.getElementById('video');
 const overlay = document.getElementById('overlay');
-const ctx = overlay.getContext('2d', { willReadFrequently: true });
+const ctx = overlay.getContext('2d');
 const handIndicator = document.getElementById('hand-indicator');
 const handIcon = document.getElementById('hand-icon');
-const gameLayer = overlay;
 
-// ===== 鼠标/触摸输入（始终同时启用） =====
-let mouseInput = { x: -1, y: -1, active: false, down: false };
+// ===== 独立检测画布（不污染游戏画布） =====
+const detCanvas = document.createElement('canvas');
+detCanvas.width = 160; detCanvas.height = 120;
+const detCtx = detCanvas.getContext('2d', { willReadFrequently: true });
+
 document.addEventListener('mousemove', e => {
   mouseInput.x = e.clientX; mouseInput.y = e.clientY; mouseInput.active = true;
 });
 document.addEventListener('mousedown', e => {
-  mouseInput.down = true; mouseInput.active = true;
+  mouseInput.wasDown = false; mouseInput.down = true; mouseInput.active = true;
 });
 document.addEventListener('mouseup', e => {
   mouseInput.down = false;
 });
 document.addEventListener('touchstart', e => {
-  const t = e.touches[0];
-  mouseInput.x = t.clientX; mouseInput.y = t.clientY; mouseInput.down = true; mouseInput.active = true;
-});
+  touchPoints = Array.from(e.touches).map(t => ({ x: t.clientX, y: t.clientY, id: t.identifier }));
+  if (e.touches.length === 1) {
+    mouseInput.x = e.touches[0].clientX; mouseInput.y = e.touches[0].clientY;
+    mouseInput.down = true; mouseInput.active = true;
+  }
+}, { passive: true });
 document.addEventListener('touchmove', e => {
-  const t = e.touches[0];
-  mouseInput.x = t.clientX; mouseInput.y = t.clientY; mouseInput.active = true;
-});
+  touchPoints = Array.from(e.touches).map(t => ({ x: t.clientX, y: t.clientY, id: t.identifier }));
+  if (e.touches.length === 1) {
+    mouseInput.x = e.touches[0].clientX; mouseInput.y = e.touches[0].clientY;
+    mouseInput.active = true;
+  }
+}, { passive: true });
 document.addEventListener('touchend', e => {
-  mouseInput.down = false;
+  touchPoints = Array.from(e.touches).map(t => ({ x: t.clientX, y: t.clientY, id: t.identifier }));
+  if (e.touches.length === 0) mouseInput.down = false;
 });
 
 function resizeCanvas() {
@@ -325,14 +329,12 @@ function isSkinHSV(r, g, b) {
   else h = (r - g) / delta + 4;
   h = h * 60;
   if (h < 0) h += 360;
-  // 扩大范围，降低阈值让更多肤色通过
-  return h >= 0 && h <= 60 && s >= 0.08 && s <= 0.9 && v >= 0.18;
+  return h >= 0 && h <= 65 && s >= 0.07 && s <= 0.92 && v >= 0.15;
 }
 
-// 形态学操作：先膨胀连接碎片，再腐蚀去除噪点
+// 形态学操作：膨胀+腐蚀
 function morphClean(mask, w, h) {
   const out = new Uint8Array(w * h);
-  // 膨胀3x3
   for (let y = 1; y < h - 1; y++) {
     for (let x = 1; x < w - 1; x++) {
       if (mask[y*w+x] || mask[(y-1)*w+x] || mask[(y+1)*w+x] || mask[y*w+x-1] || mask[y*w+x+1]) {
@@ -340,7 +342,6 @@ function morphClean(mask, w, h) {
       }
     }
   }
-  // 腐蚀3x3
   const out2 = new Uint8Array(w * h);
   for (let y = 1; y < h - 1; y++) {
     for (let x = 1; x < w - 1; x++) {
@@ -352,63 +353,74 @@ function morphClean(mask, w, h) {
   return out2;
 }
 
+// 创建新的手点对象
+function makeHandPoint() {
+  return {
+    rawX: -1, rawY: -1,
+    smoothX: -1, smoothY: -1,
+    area: 0, prevArea: 0,
+    visible: false, lostFrames: 0,
+    grabbing: false, wasGrabbing: false,
+    areaHistory: [], maxArea: 0,
+    cooldown: 0
+  };
+}
+
+// ===== 多点手掌检测（双手支持） =====
 function detectSkinBlobs() {
   const vw = video.videoWidth, vh = video.videoHeight;
   if (vw === 0 || vh === 0) return;
 
   const sw = window.innerWidth, sh = window.innerHeight;
-  const sampleW = 160, sampleH = 120;
-  ctx.drawImage(video, 0, 0, sampleW, sampleH);
-  const imgData = ctx.getImageData(0, 0, sampleW, sampleH);
+  const DW = 160, DH = 120;
+
+  // 用独立检测画布，不污染游戏画布
+  detCtx.drawImage(video, 0, 0, DW, DH);
+  const imgData = detCtx.getImageData(0, 0, DW, DH);
   const pixels = imgData.data;
 
   // 肤色标记
-  const skinMask = new Uint8Array(sampleW * sampleH);
-  for (let i = 0; i < sampleW * sampleH; i++) {
+  const skinMask = new Uint8Array(DW * DH);
+  for (let i = 0; i < DW * DH; i++) {
     const r = pixels[i*4], g = pixels[i*4+1], b = pixels[i*4+2];
     if (isSkinHSV(r, g, b)) skinMask[i] = 1;
   }
 
   // 形态学清理
-  const cleaned = morphClean(skinMask, sampleW, sampleH);
+  const cleaned = morphClean(skinMask, DW, DH);
 
   // BFS找所有连通blob
-  const visited = new Uint8Array(sampleW * sampleH);
+  const visited = new Uint8Array(DW * DH);
   let blobs = [];
 
-  for (let y = 0; y < sampleH; y++) {
-    for (let x = 0; x < sampleW; x++) {
-      if (cleaned[y * sampleW + x] && !visited[y * sampleW + x]) {
+  for (let y = 0; y < DH; y++) {
+    for (let x = 0; x < DW; x++) {
+      if (cleaned[y * DW + x] && !visited[y * DW + x]) {
         let bx = 0, by = 0, bCount = 0;
-        let minX = x, maxX = x, minY = y, maxY = y;
-        const queue = [[x, y]];
-        visited[y * sampleW + x] = 1;
-        while (queue.length > 0) {
-          const [cx, cy] = queue.shift();
-          bx += cx; by += cy; bCount++;
-          if (cx < minX) minX = cx; if (cx > maxX) maxX = cx;
-          if (cy < minY) minY = cy; if (cy > maxY) maxY = cy;
-          const neighbors = [[cx-1,cy],[cx+1,cy],[cx,cy-1],[cx,cy+1]];
-          for (const [nx, ny] of neighbors) {
-            if (nx >= 0 && nx < sampleW && ny >= 0 && ny < sampleH
-                && cleaned[ny * sampleW + nx] && !visited[ny * sampleW + nx]) {
-              visited[ny * sampleW + nx] = 1;
-              queue.push([nx, ny]);
+        const queue = [y * DW + x];
+        visited[y * DW + x] = 1;
+        let head = 0;
+        while (head < queue.length) {
+          const idx = queue[head++];
+          const qx = idx % DW, qy = Math.floor(idx / DW);
+          bx += qx; by += qy; bCount++;
+          const ns = [idx-1, idx+1, idx-DW, idx+DW];
+          for (const ni of ns) {
+            const nx = ni % DW, ny = Math.floor(ni / DW);
+            if (ni >= 0 && ni < DW*DH && nx >= 0 && nx < DW && !visited[ni] && cleaned[ni]) {
+              visited[ni] = 1;
+              queue.push(ni);
             }
           }
         }
-        if (bCount > 30) { // 降低阈值，让手的blob更容易被检测到
-          // 镜像后屏幕坐标
-          const cx_screen = (1 - (bx / bCount) / sampleW) * sw;
-          const cy_screen = (by / bCount) / sampleH * sh;
-          // blob在视频坐标中的范围
-          const vid_cx = bx / bCount;
-          const vid_cy = by / bCount;
+        if (bCount > 25) {
+          // 注意：视频是镜像的，x坐标需要翻转
+          const normX = 1 - (bx / bCount) / DW; // 镜像翻转
+          const normY = (by / bCount) / DH;
           blobs.push({
-            cx: cx_screen, cy: cy_screen,
-            vidCx: vid_cx / sampleW, vidCy: vid_cy / sampleH,
-            vidMinX: minX / sampleW, vidMaxX: maxX / sampleW,
-            vidMinY: minY / sampleH, vidMaxY: maxY / sampleH,
+            cx: normX * sw,
+            cy: normY * sh,
+            normX, normY,
             area: bCount
           });
         }
@@ -419,125 +431,169 @@ function detectSkinBlobs() {
   // 按面积排序
   blobs.sort((a, b) => b.area - a.area);
 
-  // 找脸：最大的blob，且在画面中上部区域
-  let faceBlob = null;
-  let handBlob = null;
+  // ===== 将blob分配给手点 =====
+  // 最大的blob通常是脸，跳过；取后面的blob作为手
+  // 但也有可能：脸被遮住，所有blob都是手
+  // 策略：取最多 MAX_HANDS 个 blob，且面积不能太小（避免误检）
 
-  if (blobs.length >= 1) {
-    faceBlob = blobs[0]; // 最大blob = 脸
-    // 更新脸部位置
-    const fMinX = (1 - faceBlob.vidMaxX) * sw; // 镜像
-    const fMinY = faceBlob.vidMinY * sh;
-    const fW = (faceBlob.vidMaxX - faceBlob.vidMinX) * sw;
-    const fH = (faceBlob.vidMaxY - faceBlob.vidMinY) * sh;
-    faceRegion.cx = faceBlob.cx;
-    faceRegion.cy = faceBlob.cy;
-    faceRegion.w = fW * 1.3;
-    faceRegion.h = fH * 1.5;
-    faceFound = true;
+  // 先判断哪些blob像"手"：
+  // - 面积在合理范围内
+  // - 排除最大的blob（脸），除非所有blob面积都差不多
+  let handBlobs = [];
+  const MIN_HAND_AREA = 30;
+  const MAX_HAND_AREA = 2000;
 
-    // 找手：第二大blob，或者远离脸部中心的blob
-    if (blobs.length >= 2) {
-      handBlob = blobs[1];
+  if (blobs.length === 0) {
+    handBlobs = [];
+  } else if (blobs.length === 1) {
+    // 只有1个blob，可能是脸，也可能是手
+    // 如果在屏幕下半部分或边缘，更可能是手
+    const b = blobs[0];
+    if (b.normY > 0.4 || b.normX < 0.15 || b.normX > 0.85) {
+      handBlobs = [b]; // 位置偏下/边缘，当手处理
     } else {
-      // 只有一个blob（脸+手合并），尝试从blob边缘找"延伸部分"
-      // 如果脸部blob面积突然大幅增大，说明手靠近了脸
-      // 此时使用脸部blob的边缘点作为手的近似位置
-      // 策略：找blob中距离中心最远的区域作为"手端"
-      handBlob = null; // 无法分离
+      handBlobs = []; // 中上部，当脸处理，手不可见
     }
-  }
-
-  // 更新手的检测结果
-  if (handBlob) {
-    rawHandPos.x = handBlob.cx;
-    rawHandPos.y = handBlob.cy;
-    prevBlobArea = handBlobArea;
-    handBlobArea = handBlob.area;
-    handVisible = true;
-    handLostFrames = 0;
-  } else if (faceBlob && faceBlob.area > 500 && prevBlobArea > 0) {
-    // 手可能和脸合并了——用脸部边缘作为手的位置近似
-    // 检查脸部blob是否突然变大（手靠近脸）
-    const faceAreaDelta = faceBlob.area / (faceBlob.area - handBlobArea || faceBlob.area);
-    // 用鼠标/触摸位置作为替代
-    if (mouseInput.active) {
-      rawHandPos.x = mouseInput.x;
-      rawHandPos.y = mouseInput.y;
-      handVisible = true;
-      handLostFrames = 0;
-    } else {
-      handLostFrames++;
-      if (handLostFrames > 8) {
-        handVisible = false;
-      }
-    }
-    handBlobArea = 0;
   } else {
-    // 没有检测到任何blob
-    if (mouseInput.active) {
-      rawHandPos.x = mouseInput.x;
-      rawHandPos.y = mouseInput.y;
-      handVisible = true;
-      handLostFrames = 0;
-      handBlobArea = 0;
-    } else {
-      handLostFrames++;
-      if (handLostFrames > 5) {
-        handVisible = false;
-        handBlobArea = 0;
-      }
+    // 多个blob：
+    // 最大的通常是脸（排除），剩余的是手
+    // 但如果第二大/第三大面积比第一大小很多，它们是手
+    const faceBlob = blobs[0];
+    const rest = blobs.slice(1).filter(b => b.area >= MIN_HAND_AREA && b.area <= MAX_HAND_AREA);
+    handBlobs = rest.slice(0, MAX_HANDS);
+
+    // 如果rest为空（所有blob都太大），退化用边缘blob
+    if (handBlobs.length === 0 && blobs.length >= 2) {
+      handBlobs = blobs.slice(1, 1 + MAX_HANDS);
     }
   }
 
-  // ===== 平滑手位置（关键：避免跳跃和贴边缘） =====
-  const SMOOTH_FACTOR = 0.35; // 平滑系数（0=全平滑不动，1=无平滑全靠原始值）
-  if (handVisible) {
-    if (smoothHandPos.x < 0) {
-      // 首次检测，直接赋值
-      smoothHandPos.x = rawHandPos.x;
-      smoothHandPos.y = rawHandPos.y;
-    } else {
-      smoothHandPos.x += (rawHandPos.x - smoothHandPos.x) * SMOOTH_FACTOR;
-      smoothHandPos.y += (rawHandPos.y - smoothHandPos.y) * SMOOTH_FACTOR;
+  // ===== 更新handPoints（稳定追踪，避免闪烁） =====
+  // 保证handPoints数组长度 = MAX_HANDS
+  while (handPoints.length < MAX_HANDS) handPoints.push(makeHandPoint());
+
+  // 匹配：把检测到的blob匹配到最近的handPoint
+  const used = new Array(MAX_HANDS).fill(false);
+  const assigned = new Array(handBlobs.length).fill(-1);
+
+  // 贪心最近距离匹配
+  for (let bi = 0; bi < handBlobs.length; bi++) {
+    let bestDist = Infinity, bestHi = -1;
+    for (let hi = 0; hi < MAX_HANDS; hi++) {
+      if (used[hi]) continue;
+      const hp = handPoints[hi];
+      if (!hp.visible) { // 空闲slot优先
+        if (bestHi === -1 || hp.visible === false) {
+          bestDist = 0; bestHi = hi;
+        }
+      } else {
+        const dx = handBlobs[bi].cx - hp.smoothX;
+        const dy = handBlobs[bi].cy - hp.smoothY;
+        const d = Math.sqrt(dx*dx + dy*dy);
+        if (d < bestDist) { bestDist = d; bestHi = hi; }
+      }
     }
-    // 约束在屏幕范围内
-    smoothHandPos.x = Math.max(20, Math.min(sw - 20, smoothHandPos.x));
-    smoothHandPos.y = Math.max(20, Math.min(sh - 20, smoothHandPos.y));
+    if (bestHi !== -1) { used[bestHi] = true; assigned[bi] = bestHi; }
+  }
+
+  // 更新匹配到的handPoints
+  for (let bi = 0; bi < handBlobs.length; bi++) {
+    const hi = assigned[bi];
+    if (hi === -1) continue;
+    const hp = handPoints[hi];
+    const blob = handBlobs[bi];
+    hp.prevArea = hp.area;
+    hp.area = blob.area;
+    hp.rawX = blob.cx;
+    hp.rawY = blob.cy;
+    hp.visible = true;
+    hp.lostFrames = 0;
+
+    // 平滑
+    const SMOOTH = 0.4;
+    if (hp.smoothX < 0) { hp.smoothX = hp.rawX; hp.smoothY = hp.rawY; }
+    else {
+      hp.smoothX += (hp.rawX - hp.smoothX) * SMOOTH;
+      hp.smoothY += (hp.rawY - hp.smoothY) * SMOOTH;
+    }
+    // 约束屏幕范围
+    hp.smoothX = Math.max(0, Math.min(sw, hp.smoothX));
+    hp.smoothY = Math.max(0, Math.min(sh, hp.smoothY));
+  }
+
+  // 更新未匹配的handPoints（逐渐消失）
+  for (let hi = 0; hi < MAX_HANDS; hi++) {
+    if (used[hi]) continue;
+    const hp = handPoints[hi];
+    hp.lostFrames++;
+    if (hp.lostFrames > 8) {
+      hp.visible = false;
+      hp.smoothX = -1; hp.smoothY = -1;
+      hp.area = 0; hp.prevArea = 0;
+      hp.areaHistory = []; hp.maxArea = 0;
+    }
+  }
+
+  // ===== 鼠标/触摸补充 =====
+  // 鼠标补充到第一个不可见的slot
+  if (mouseInput.active) {
+    let slot = handPoints.find(hp => !hp.visible);
+    // 或者如果鼠标按下，临时激活鼠标点
+    if (mouseInput.down) {
+      // 找没有被camera占用的slot
+      if (!slot) slot = handPoints[MAX_HANDS - 1]; // 用最后一个slot
+      slot.rawX = mouseInput.x;
+      slot.rawY = mouseInput.y;
+      slot.smoothX = mouseInput.x;
+      slot.smoothY = mouseInput.y;
+      slot.visible = true;
+      slot.lostFrames = 0;
+      slot.area = 100; // 假设一个面积
+    }
+  }
+
+  // 多点触摸：每个触摸点对应一个hand slot
+  if (touchPoints.length > 0) {
+    for (let ti = 0; ti < Math.min(touchPoints.length, MAX_HANDS); ti++) {
+      const tp = touchPoints[ti];
+      const hp = handPoints[ti];
+      hp.rawX = tp.x; hp.rawY = tp.y;
+      hp.smoothX = tp.x; hp.smoothY = tp.y;
+      hp.visible = true; hp.lostFrames = 0;
+      hp.area = 100;
+    }
   }
 }
 
-// ===== 判断握拳（改进版） =====
-let recentMaxArea = 0;
-let areaHistory = [];
-const AREA_HISTORY_LEN = 20;
+// ===== 判断握拳（每个手点独立判断） =====
 const GRAB_THRESHOLD = 0.50;
+const AREA_HISTORY_LEN = 18;
 
 function detectGrabGesture() {
-  if (!handVisible) {
-    isGrabbing = false;
-    return;
-  }
+  for (const hp of handPoints) {
+    hp.wasGrabbing = hp.grabbing;
 
-  // 鼠标/触摸的点击 = 立即抓取
-  if (mouseInput.down && mouseInput.active) {
-    isGrabbing = true;
-    return;
-  }
+    if (!hp.visible) { hp.grabbing = false; continue; }
 
-  // 肤色检测的握拳：面积变化法
-  if (handBlobArea > 0) {
-    areaHistory.push(handBlobArea);
-    if (areaHistory.length > AREA_HISTORY_LEN) areaHistory.shift();
-    recentMaxArea = Math.max(...areaHistory);
-    if (recentMaxArea > 20 && handBlobArea < recentMaxArea * GRAB_THRESHOLD) {
-      isGrabbing = true;
+    // 肤色握拳检测：面积缩小到历史最大的50%以下
+    if (hp.area > 0) {
+      hp.areaHistory.push(hp.area);
+      if (hp.areaHistory.length > AREA_HISTORY_LEN) hp.areaHistory.shift();
+      hp.maxArea = Math.max(...hp.areaHistory);
+      if (hp.maxArea > 20 && hp.area < hp.maxArea * GRAB_THRESHOLD) {
+        hp.grabbing = true;
+      } else {
+        hp.grabbing = false;
+      }
     } else {
-      isGrabbing = false;
+      hp.grabbing = false;
     }
-  } else {
-    // 没有肤色面积数据时，无法判断握拳
-    isGrabbing = false;
+  }
+
+  // 鼠标按下=第一个激活slot的grabbing
+  if (mouseInput.down && mouseInput.active) {
+    const slot = handPoints.find(hp => hp.visible);
+    if (slot) slot.grabbing = true;
   }
 }
 
@@ -630,32 +686,57 @@ function spawnSparkles(cx, cy) {
   }
 }
 
-// ===== 抓取脸谱 =====
-let grabCooldown = 0;
+// ===== 抓取脸谱（多手点支持） =====
+let grabCooldownGlobal = 0;
 function tryGrab() {
-  if (!handVisible || !isGrabbing || wasGrabbing) return;
-  if (grabCooldown > 0) return;
+  if (grabCooldownGlobal > 0) { grabCooldownGlobal--; return; }
 
-  const hx = smoothHandPos.x, hy = smoothHandPos.y;
-  for (const m of maskObjs) {
-    if (!m.caught && !m.catching && m.hitTest(hx, hy)) {
-      m.catching = true;
-      spawnSparkles(m.cx, m.cy);
-      grabCooldown = 15; // 15帧冷却防止连续抓取
-      setTimeout(() => {
-        m.caught = true;
-        m.catching = false;
-        caughtCount++;
-        caughtMasks.push(m.data);
-        updateUI();
-        showCatchToast(m.data);
-        if (caughtCount >= TOTAL) {
-          setTimeout(showWin, 1500);
-        }
-      }, 400);
-      break;
+  for (const hp of handPoints) {
+    if (!hp.visible || !hp.grabbing || hp.wasGrabbing) continue;
+    if (hp.cooldown > 0) { hp.cooldown--; continue; }
+
+    const hx = hp.smoothX, hy = hp.smoothY;
+    for (const m of maskObjs) {
+      if (!m.caught && !m.catching && m.hitTest(hx, hy)) {
+        m.catching = true;
+        spawnSparkles(m.cx, m.cy);
+        hp.cooldown = 20; // 该手点冷却20帧
+        grabCooldownGlobal = 10;
+        setTimeout(() => {
+          m.caught = true;
+          m.catching = false;
+          caughtCount++;
+          caughtMasks.push(m.data);
+          updateUI();
+          showCatchToast(m.data);
+          if (caughtCount >= TOTAL) {
+            setTimeout(showWin, 1500);
+          }
+        }, 400);
+        break;
+      }
     }
   }
+
+  // 鼠标单击抓取
+  if (mouseInput.down && !mouseInput.wasDown) {
+    mouseInput.wasDown = true;
+    const hx = mouseInput.x, hy = mouseInput.y;
+    for (const m of maskObjs) {
+      if (!m.caught && !m.catching && m.hitTest(hx, hy)) {
+        m.catching = true;
+        spawnSparkles(m.cx, m.cy);
+        setTimeout(() => {
+          m.caught = true; m.catching = false;
+          caughtCount++; caughtMasks.push(m.data);
+          updateUI(); showCatchToast(m.data);
+          if (caughtCount >= TOTAL) setTimeout(showWin, 1500);
+        }, 400);
+        break;
+      }
+    }
+  }
+  if (!mouseInput.down) mouseInput.wasDown = false;
 }
 
 function showCatchToast(maskData) {
@@ -704,47 +785,75 @@ function drawCaughtIcons(ctx) {
 
 // ===== 主循环 =====
 let frameCount = 0;
+// 多手指示符（复用/创建）
+const handIndicators = [];
+function getHandIndicator(i) {
+  while (handIndicators.length <= i) {
+    const el = document.createElement('div');
+    el.style.cssText = `position:fixed;z-index:8;pointer-events:none;display:none;
+      width:60px;height:60px;border-radius:50%;border:3px solid #FFD700;
+      background:rgba(255,215,0,0.15);transform:translate(-50%,-50%);
+      transition:border-color 0.1s,background 0.1s;`;
+    const icon = document.createElement('div');
+    icon.style.cssText = `position:fixed;z-index:9;pointer-events:none;display:none;
+      font-size:2rem;transform:translate(-50%,-50%);
+      filter:drop-shadow(0 2px 8px rgba(0,0,0,0.9));user-select:none;`;
+    document.body.appendChild(el);
+    document.body.appendChild(icon);
+    handIndicators.push({ el, icon });
+  }
+  return handIndicators[i];
+}
+
 function gameLoop() {
   if (!gameRunning) return;
 
   const sw = window.innerWidth, sh = window.innerHeight;
   ctx.clearRect(0, 0, sw, sh);
 
-  // 每帧都检测肤色（提高灵敏度）
+  // 每帧检测肤色
   detectSkinBlobs();
   detectGrabGesture();
 
-  // 冷却倒计时
-  if (grabCooldown > 0) grabCooldown--;
-
   // 更新脸谱
   for (const m of maskObjs) m.update();
-
   // 绘制脸谱
   for (const m of maskObjs) m.draw(ctx);
-
   // 绘制已抓脸谱小图标
   drawCaughtIcons(ctx);
 
-  // 更新手指示符（使用平滑位置）
-  if (handVisible && smoothHandPos.x > 0) {
-    handIndicator.style.display = 'block';
-    handIndicator.style.left = smoothHandPos.x + 'px';
-    handIndicator.style.top = smoothHandPos.y + 'px';
-    handIndicator.className = isGrabbing ? 'grabbing' : '';
-    handIcon.style.display = 'block';
-    handIcon.style.left = smoothHandPos.x + 'px';
-    handIcon.style.top = smoothHandPos.y + 'px';
-    handIcon.textContent = isGrabbing ? '✊' : '✋';
-    handIcon.style.color = isGrabbing ? '#FF4444' : '#FFD700';
-  } else {
-    handIndicator.style.display = 'none';
-    handIcon.style.display = 'none';
+  // 更新多个手指示符
+  for (let i = 0; i < MAX_HANDS; i++) {
+    const hp = i < handPoints.length ? handPoints[i] : null;
+    const ind = getHandIndicator(i);
+    if (hp && hp.visible && hp.smoothX > 0) {
+      ind.el.style.display = 'block';
+      ind.el.style.left = hp.smoothX + 'px';
+      ind.el.style.top = hp.smoothY + 'px';
+      if (hp.grabbing) {
+        ind.el.style.borderColor = '#FF4444';
+        ind.el.style.background = 'rgba(255,68,68,0.25)';
+      } else {
+        ind.el.style.borderColor = i === 0 ? '#FFD700' : '#00FF88';
+        ind.el.style.background = i === 0 ? 'rgba(255,215,0,0.15)' : 'rgba(0,255,136,0.15)';
+      }
+      ind.icon.style.display = 'block';
+      ind.icon.style.left = hp.smoothX + 'px';
+      ind.icon.style.top = hp.smoothY + 'px';
+      ind.icon.textContent = hp.grabbing ? '✊' : '✋';
+      ind.icon.style.color = hp.grabbing ? '#FF4444' : (i === 0 ? '#FFD700' : '#00FF88');
+    } else {
+      ind.el.style.display = 'none';
+      ind.icon.style.display = 'none';
+    }
   }
+
+  // 原始 hand-indicator 隐藏（改用动态创建的指示符）
+  handIndicator.style.display = 'none';
+  handIcon.style.display = 'none';
 
   // 尝试抓取
   tryGrab();
-  wasGrabbing = isGrabbing;
 
   frameCount++;
   requestAnimationFrame(gameLoop);
@@ -775,17 +884,13 @@ function _startGameInner() {
   gameWon = false;
   caughtMasks = [];
   frameCount = 0;
-  areaHistory = [];
-  recentMaxArea = 0;
-  handBlobArea = 0;
-  prevBlobArea = 0;
-  smoothHandPos = { x: -1, y: -1 };
-  rawHandPos = { x: -1, y: -1 };
-  handVisible = false;
-  handLostFrames = 0;
-  isGrabbing = false;
-  wasGrabbing = false;
-  grabCooldown = 0;
+  grabCooldownGlobal = 0;
+  mouseInput.wasDown = false;
+  touchPoints = [];
+
+  // 重置多手点
+  handPoints = [];
+  for (let i = 0; i < MAX_HANDS; i++) handPoints.push(makeHandPoint());
 
   // 预加载SVG图片
   MASKS.forEach(m => drawSVGToCtx(ctx, m.svg, 0, 0, 1, 1));
@@ -801,8 +906,6 @@ function restartGame() {
   gameRunning = false;
   maskObjs = [];
   document.getElementById('win-screen').style.display = 'none';
-  areaHistory = [];
-  recentMaxArea = 0;
   _startGameInner();
 }
 </script>
