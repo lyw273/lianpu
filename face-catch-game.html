@@ -1042,28 +1042,37 @@ class CharObj {
   constructor(data, idx) {
     this.data = data;
     this.idx = idx;
-    this.size = 80 + Math.random() * 40;
+    this.size = 90 + Math.random() * 50;
     this.spawnFromTop = Math.random() > 0.5;
     const sw = window.innerWidth, sh = window.innerHeight;
     if (this.spawnFromTop) {
-      this.x = 30 + Math.random() * (sw - this.size - 60);
-      this.y = -this.size - 10 - Math.random() * 80;
+      this.x = Math.random() * (sw - this.size);
+      this.y = -this.size - 10 - Math.random() * 120;
     } else {
-      this.x = 30 + Math.random() * (sw - this.size - 60);
-      this.y = sh + 10 + Math.random() * 80;
+      this.x = Math.random() * (sw - this.size);
+      this.y = sh + 10 + Math.random() * 120;
     }
-    this.vx = (Math.random() - 0.5) * 1.8;
-    this.vy = this.spawnFromTop ? (0.8 + Math.random() * 1.5) : (-0.8 - Math.random() * 1.5);
+    this.vx = (Math.random() - 0.5) * 0.8;
+    this.vy = this.spawnFromTop ? (0.5 + Math.random() * 0.8) : (-0.5 - Math.random() * 0.8);
     this.angle = (Math.random() - 0.5) * 15;
     this.angleV = (Math.random() - 0.5) * 0.8;
     this.caught = false;
     this.catching = false;
+    this.caughtAlpha = 0.95;
     this.floatPhase = Math.random() * Math.PI * 2;
     this.floatSpeed = 0.02 + Math.random() * 0.02;
   }
 
   update() {
-    if (this.caught || this.catching) return;
+    if (this.catching) return;
+    if (this.caught) {
+      // 已被抓角色：淡出后重新从云层飘入
+      this.caughtAlpha -= 0.05;
+      if (this.caughtAlpha <= 0) {
+        this._respawn();
+      }
+      return;
+    }
     this.x += this.vx;
     this.y += this.vy;
     this.floatPhase += this.floatSpeed;
@@ -1074,21 +1083,42 @@ class CharObj {
     if (this.x + this.size > sw - 10) { this.x = sw - this.size - 10; this.vx *= -1; }
     if (this.spawnFromTop && this.y > sh + this.size + 20) {
       this.y = -this.size - 10 - Math.random() * 50;
-      this.x = 30 + Math.random() * (sw - this.size - 60);
+      this.x = Math.random() * (sw - this.size);
     }
     if (!this.spawnFromTop && this.y < -this.size - 20) {
       this.y = sh + 10 + Math.random() * 50;
-      this.x = 30 + Math.random() * (sw - this.size - 60);
+      this.x = Math.random() * (sw - this.size);
     }
   }
 
+  _respawn() {
+    this.spawnFromTop = Math.random() > 0.5;
+    const sw = window.innerWidth, sh = window.innerHeight;
+    this.size = 90 + Math.random() * 50;
+    this.x = Math.random() * (sw - this.size);
+    this.vx = (Math.random() - 0.5) * 0.8;
+    this.vy = this.spawnFromTop ? (0.5 + Math.random() * 0.8) : (-0.5 - Math.random() * 0.8);
+    this.angle = (Math.random() - 0.5) * 15;
+    this.angleV = (Math.random() - 0.5) * 0.8;
+    this.floatPhase = Math.random() * Math.PI * 2;
+    this.floatSpeed = 0.02 + Math.random() * 0.02;
+    if (this.spawnFromTop) {
+      this.y = -this.size - 10 - Math.random() * 120;
+    } else {
+      this.y = sh + 10 + Math.random() * 120;
+    }
+    this.caught = false;
+    this.catching = false;
+    this.caughtAlpha = 0.95;
+  }
+
   draw(ctx) {
-    if (this.caught) return;
+    if (this.caught && this.caughtAlpha <= 0) return;
     ctx.save();
     const floatOffset = Math.sin(this.floatPhase) * 4;
     ctx.translate(this.x + this.size/2, this.y + this.size/2 + floatOffset);
     ctx.rotate(this.angle * Math.PI / 180);
-    ctx.globalAlpha = this.catching ? 0.5 : 0.95;
+    ctx.globalAlpha = this.catching ? 0.5 : (this.caught ? this.caughtAlpha : 0.95);
     drawCharToCtx(ctx, this.data.svg, -this.size/2, -this.size/2, this.size, this.size);
     ctx.restore();
   }
@@ -1098,7 +1128,7 @@ class CharObj {
 
   hitTest(px, py) {
     const dx = px - this.cx, dy = py - this.cy;
-    return Math.sqrt(dx*dx + dy*dy) < this.size * 0.55;
+    return Math.sqrt(dx*dx + dy*dy) < this.size * 0.7;
   }
 }
 
@@ -1167,16 +1197,18 @@ function tryGrab() {
         c.catching = true;
         spawnSparkles(c.cx, c.cy);
         showScorePopup(c.cx, c.cy - 20, c.data.points);
-        hp.cooldown = 20;
-        grabCooldownGlobal = 10;
+        hp.cooldown = 8;
+        grabCooldownGlobal = 3;
         setTimeout(() => {
-          c.caught = true; c.catching = false;
+          c.catching = false;
+          c.caught = true;
+          c.caughtAlpha = 0.95;
           score += c.data.points;
           caughtCount++;
           caughtChars.push(c.data);
           updateUI();
           showCatchToast(c.data);
-        }, 350);
+        }, 300);
         break;
       }
     }
@@ -1192,10 +1224,12 @@ function tryGrab() {
         spawnSparkles(c.cx, c.cy);
         showScorePopup(c.cx, c.cy - 20, c.data.points);
         setTimeout(() => {
-          c.caught = true; c.catching = false;
+          c.catching = false;
+          c.caught = true;
+          c.caughtAlpha = 0.95;
           score += c.data.points; caughtCount++; caughtChars.push(c.data);
           updateUI(); showCatchToast(c.data);
-        }, 350);
+        }, 300);
         break;
       }
     }
@@ -1257,33 +1291,30 @@ function endGame() {
   const detailEl = document.getElementById('result-detail');
 
   let rank, comment, rankColor;
-  const maxScore = CHARACTERS.reduce((sum, c) => sum + c.points, 0);
 
-  if (caughtCount >= TOTAL) {
-    if (score >= maxScore * 0.95) {
-      rank = '🏆 完美大师！';
-      comment = '太厉害了！你在限定时间内集齐了所有Q版脸谱小人！你的反应速度和精准度堪称完美！';
-      rankColor = '#FFD700';
-    } else {
-      rank = '🎉 通关达人！';
-      comment = '恭喜你成功集齐所有脸谱角色！你是真正的脸谱大师！';
-      rankColor = '#FF6B00';
-    }
-  } else if (caughtCount >= 6) {
+  if (score >= 1500) {
+    rank = '🏆 完美大师！';
+    comment = '太厉害了！你的反应速度和精准度堪称完美！一口气拿下超高分数！';
+    rankColor = '#FFD700';
+  } else if (score >= 1000) {
+    rank = '🎉 通关达人！';
+    comment = '恭喜你拿下超高分！你是真正的脸谱大师！';
+    rankColor = '#FF6B00';
+  } else if (score >= 600) {
     rank = '⭐ 优秀！';
-    comment = '非常棒的表现！你抓住了大部分角色。再接再厉，下次争取全部拿下！';
+    comment = '非常棒的表现！你抓住了大量角色。再接再厉，下次争取更高分！';
     rankColor = '#00AA55';
-  } else if (caughtCount >= 4) {
+  } else if (score >= 400) {
     rank = '👍 不错哦！';
     comment = '表现不错！继续加油，多练习几次就能提高啦~ 记住：握拳要果断！';
     rankColor = '#3399FF';
-  } else if (caughtCount >= 2) {
+  } else if (score >= 200) {
     rank = '💪 继续努力！';
     comment = '刚开始玩吧？多试几次就能找到感觉了！提示：把手移到角色上方再握拳抓取。';
     rankColor = '#FF9900';
-  } else if (caughtCount >= 1) {
+  } else if (score >= 100) {
     rank = '🌱 初来乍到';
-    comment = '抓住了一个！万事开头难，熟悉操作后再来挑战高分吧~';
+    comment = '抓住了一些！万事开头难，熟悉操作后再来挑战高分吧~';
     rankColor = '#999';
   } else {
     rank = '😅 再试一次';
@@ -1296,7 +1327,7 @@ function endGame() {
   commentEl.innerHTML = comment;
   scoreEl.textContent = score + ' 分';
   scoreEl.style.color = rankColor;
-  detailEl.textContent = '成功抓取 ' + caughtCount + '/' + TOTAL + ' 个角色 · 用时 ' + (30 - timeLeft) + ' 秒';
+  detailEl.textContent = '成功抓取 ' + caughtCount + ' 个角色 · 用时 ' + (30 - timeLeft) + ' 秒';
 
   resultScreen.style.display = 'flex';
 }
@@ -1457,7 +1488,7 @@ function _startGameInner() {
   document.getElementById('game-ui-bar').style.display = 'flex';
   document.getElementById('hint').style.display = 'block';
 
-  charObjs = CHARACTERS.map((c, i) => new CharObj(c, i));
+  charObjs = CHARACTERS.flatMap((c, i) => [...Array(3)].map(() => new CharObj(c, i)));
   gameRunning = true;
   score = 0;
   caughtCount = 0;
