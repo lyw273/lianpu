@@ -103,7 +103,33 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font
   font-weight: bold; box-shadow: 0 0 20px rgba(255,165,0,0.5);
 }
 
-@keyframes pulse { from { transform: scale(1); } to { transform: scale(1.06); } }
+#camera-error {
+  position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+  background: rgba(0,0,0,0.92); z-index: 300;
+  display: none; flex-direction: column;
+  align-items: center; justify-content: center;
+  color: #fff; padding: 2rem; text-align: center;
+}
+#camera-error .err-title { font-size: 1.8rem; color: #FF4444; margin-bottom: 1rem; }
+#camera-error .err-msg {
+  font-size: 1rem; color: #ccc; max-width: 500px;
+  line-height: 1.7; margin-bottom: 2rem;
+  background: rgba(255,255,255,0.05); border-radius: 12px;
+  padding: 1rem 1.5rem; border: 1px solid rgba(255,68,68,0.3);
+}
+#camera-error .err-btns { display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center; }
+#camera-error .btn-retry {
+  padding: 0.8rem 2rem; font-size: 1.1rem;
+  background: linear-gradient(135deg, #FF6B00, #FFD700);
+  color: #000; border: none; border-radius: 40px; cursor: pointer; font-weight: bold;
+}
+#camera-error .btn-skip {
+  padding: 0.8rem 2rem; font-size: 1.1rem;
+  background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3);
+  color: #fff; border-radius: 40px; cursor: pointer;
+}
+
+
 @keyframes fadeInOut { 0% { opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } 100% { opacity: 0; } }
 @keyframes caughtAnim {
   0% { opacity: 1; transform: scale(1); }
@@ -135,6 +161,15 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font
   <div class="msg">恭喜您成功抓到一个<br><span class="highlight" id="toast-mask-name"></span></div>
 </div>
 
+<div id="camera-error">
+  <div class="err-title">📷 摄像头无法启动</div>
+  <div class="err-msg"></div>
+  <div class="err-btns">
+    <button class="btn-retry" onclick="retryCamera()">🔄 重新授权摄像头</button>
+    <button class="btn-skip" onclick="startWithoutCamera()">🖱️ 改用鼠标操控</button>
+  </div>
+</div>
+
 <div id="win-screen">
   <div id="win-msg">🎉 恭喜你成功通关！</div>
   <div id="win-sub">你已集齐所有脸谱，成为脸谱大师！</div>
@@ -161,9 +196,9 @@ const MASKS = [
   // ── 曹操：白脸奸雄，细眉 ──
   { name:"曹操", color:"#E8DCC8", svg:`<svg viewBox="0 0 120 160" xmlns="http://www.w3.org/2000/svg"><ellipse cx="60" cy="92" rx="46" ry="42" fill="#FFF0E8" stroke="#3D2B1F" stroke-width="3"/><ellipse cx="36" cy="88" rx="10" ry="7" fill="#FF9EB5" opacity="0.7"/><ellipse cx="84" cy="88" rx="10" ry="7" fill="#FF9EB5" opacity="0.7"/><path d="M44 80 Q50 76 56 80" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M64 80 Q70 76 76 80" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M54 97 Q60 102 66 97" stroke="#C4956A" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M18 54 Q30 40 45 52 Q60 37 75 52 Q90 40 102 54 Q94 66 84 58 Q72 69 60 62 Q48 69 36 58 Q26 66 18 54Z" fill="#E8DCC8" stroke="#D4C4A8" stroke-width="1.5"/><ellipse cx="60" cy="55" rx="35" ry="27" fill="#F0E8D8"/><path d="M34 48 Q60 35 86 48" stroke="#C8A878" stroke-width="2" fill="none"/><path d="M40 42 Q60 31 80 42" stroke="#C8A878" stroke-width="1.3" fill="none"/><path d="M28 62 Q40 55 54 63 Q40 70 28 62Z" fill="#3a2a1a"/><path d="M66 63 Q80 55 92 62 Q80 70 66 63Z" fill="#3a2a1a"/><ellipse cx="41" cy="62" rx="5.5" ry="4" fill="#4a3a2a"/><ellipse cx="79" cy="62" rx="5.5" ry="4" fill="#4a3a2a"/><circle cx="43" cy="61" r="1.5" fill="#fff"/><circle cx="81" cy="61" r="1.5" fill="#fff"/><path d="M27 54 Q40 47 54 55" stroke="#3a2a1a" stroke-width="3" fill="none"/><path d="M66 55 Q80 47 93 54" stroke="#3a2a1a" stroke-width="3" fill="none"/><path d="M50 76 Q60 83 70 76" stroke="#A07850" stroke-width="2" fill="none"/><path d="M44 91 Q60 97 76 91" stroke="#A07850" stroke-width="2.5" fill="none"/><path d="M48 95 Q60 99 72 95" stroke="#CC9966" stroke-width="1.8" fill="none"/><path d="M20 72 Q24 83 20 93" stroke="#C8A878" stroke-width="3" fill="none" stroke-linecap="round"/><path d="M100 72 Q96 83 100 93" stroke="#C8A878" stroke-width="3" fill="none" stroke-linecap="round"/><rect x="24" y="28" width="72" height="16" rx="5" fill="#2a2a1a" stroke="#1a1a0a" stroke-width="1"/><rect x="34" y="23" width="52" height="9" rx="4.5" fill="#3a3a2a"/><ellipse cx="60" cy="27" r="5" fill="#FFD700" stroke="#CC9900" stroke-width="1"/><path d="M28 24 Q60 10 92 24" fill="none" stroke="#8a6a3a" stroke-width="3.5"/><path d="M42 18 L60 8 L78 18" fill="none" stroke="#FFD700" stroke-width="2"/><circle cx="60" cy="8" r="4" fill="#FFD700"/></svg>` },
   // ── 包拯：黑面包公，月牙额头，乌纱帽 ──
-  { name:"包拯", color="#1a1a2e", svg:`<svg viewBox="0 0 120 160" xmlns="http://www.w3.org/2000/svg"><ellipse cx="60" cy="92" rx="46" ry="42" fill="#FFF0E8" stroke="#3D2B1F" stroke-width="3"/><ellipse cx="36" cy="88" rx="10" ry="7" fill="#FF9EB5" opacity="0.7"/><ellipse cx="84" cy="88" rx="10" ry="7" fill="#FF9EB5" opacity="0.7"/><path d="M44 80 Q50 75 56 80" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M64 80 Q70 75 76 80" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M52 97 Q60 104 68 97" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><rect x="18" y="44" width="84" height="22" rx="4" fill="#1a1a22" stroke="#0d0d18" stroke-width="1.5"/><rect x="28" y="36" width="64" height="14" rx="5" fill="#222238"/><path d="M20 56 Q32 46 46 56 Q60 42 74 56 Q88 46 100 56 Q92 68 82 60 Q70 72 60 64 Q50 72 38 60 Q28 68 20 56Z" fill="#EEE8F0" stroke="#ccccee" stroke-width="1.5"/><ellipse cx="60" cy="58" rx="34" ry="24" fill="#F5F0F8"/><path d="M52 48 Q60 42 68 48" stroke="#C0C0C0" stroke-width="3" fill="none"/><path d="M54 46 Q60 40 66 46" stroke="#aaaacc" stroke-width="2" fill="none"/><path d="M48 50 L60 44 L72 50" fill="#ddddee" stroke="#bbbccd" stroke-width="1"/><circle cx="60" cy="44" r="5" fill="none" stroke="#9999aa" stroke-width="1.8"/><ellipse cx="42" cy="64" rx="12" ry="10" fill="#333355"/><ellipse cx="78" cy="64" rx="12" ry="10" fill="#333355"/><ellipse cx="42" cy="64" rx="7" ry="7" fill="#1a1a3a"/><ellipse cx="78" cy="64" rx="7" ry="7" fill="#1a1a3a"/><circle cx="44" cy="62" r="2.8" fill="#fff"/><circle cx="80" cy="62" r="2.8" fill="#fff"/><path d="M28 56 Q38 48 50 57" stroke="#444455" stroke-width="5.5" fill="none" stroke-linecap="round"/><path d="M70 57 Q82 48 92 56" stroke="#444455" stroke-width="5.5" fill="none" stroke-linecap="round"/><path d="M54 76 Q60 83 66 76" stroke="#888899" stroke-width="2" fill="none"/><path d="M42 91 Q60 98 78 91" stroke="#888899" stroke-width="2.5" fill="none"/><path d="M22 68 Q26 80 22 90" stroke="#444455" stroke-width="3.5" fill="none" stroke-linecap="round"/><path d="M98 68 Q94 80 98 90" stroke="#444455" stroke-width="3.5" fill="none" stroke-linecap="round"/><ellipse cx="60" cy="29" r="5" fill="#FFD700" stroke="#CC9900" stroke-width="1.2"/></svg>` },
+  { name:"包拯", color:"#1a1a2e", svg:`<svg viewBox="0 0 120 160" xmlns="http://www.w3.org/2000/svg"><ellipse cx="60" cy="92" rx="46" ry="42" fill="#FFF0E8" stroke="#3D2B1F" stroke-width="3"/><ellipse cx="36" cy="88" rx="10" ry="7" fill="#FF9EB5" opacity="0.7"/><ellipse cx="84" cy="88" rx="10" ry="7" fill="#FF9EB5" opacity="0.7"/><path d="M44 80 Q50 75 56 80" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M64 80 Q70 75 76 80" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M52 97 Q60 104 68 97" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><rect x="18" y="44" width="84" height="22" rx="4" fill="#1a1a22" stroke="#0d0d18" stroke-width="1.5"/><rect x="28" y="36" width="64" height="14" rx="5" fill="#222238"/><path d="M20 56 Q32 46 46 56 Q60 42 74 56 Q88 46 100 56 Q92 68 82 60 Q70 72 60 64 Q50 72 38 60 Q28 68 20 56Z" fill="#EEE8F0" stroke="#ccccee" stroke-width="1.5"/><ellipse cx="60" cy="58" rx="34" ry="24" fill="#F5F0F8"/><path d="M52 48 Q60 42 68 48" stroke="#C0C0C0" stroke-width="3" fill="none"/><path d="M54 46 Q60 40 66 46" stroke="#aaaacc" stroke-width="2" fill="none"/><path d="M48 50 L60 44 L72 50" fill="#ddddee" stroke="#bbbccd" stroke-width="1"/><circle cx="60" cy="44" r="5" fill="none" stroke="#9999aa" stroke-width="1.8"/><ellipse cx="42" cy="64" rx="12" ry="10" fill="#333355"/><ellipse cx="78" cy="64" rx="12" ry="10" fill="#333355"/><ellipse cx="42" cy="64" rx="7" ry="7" fill="#1a1a3a"/><ellipse cx="78" cy="64" rx="7" ry="7" fill="#1a1a3a"/><circle cx="44" cy="62" r="2.8" fill="#fff"/><circle cx="80" cy="62" r="2.8" fill="#fff"/><path d="M28 56 Q38 48 50 57" stroke="#444455" stroke-width="5.5" fill="none" stroke-linecap="round"/><path d="M70 57 Q82 48 92 56" stroke="#444455" stroke-width="5.5" fill="none" stroke-linecap="round"/><path d="M54 76 Q60 83 66 76" stroke="#888899" stroke-width="2" fill="none"/><path d="M42 91 Q60 98 78 91" stroke="#888899" stroke-width="2.5" fill="none"/><path d="M22 68 Q26 80 22 90" stroke="#444455" stroke-width="3.5" fill="none" stroke-linecap="round"/><path d="M98 68 Q94 80 98 90" stroke="#444455" stroke-width="3.5" fill="none" stroke-linecap="round"/><ellipse cx="60" cy="29" r="5" fill="#FFD700" stroke="#CC9900" stroke-width="1.2"/></svg>` },
   // ── 窦尔敦：蓝脸英雄 ──
-  { name:"窦尔敦", color="#3355AA", svg:`<svg viewBox="0 0 120 160" xmlns="http://www.w3.org/2000/svg"><ellipse cx="60" cy="92" rx="46" ry="42" fill="#FFF0E8" stroke="#3D2B1F" stroke-width="3"/><ellipse cx="36" cy="88" rx="10" ry="7" fill="#FF9EB5" opacity="0.7"/><ellipse cx="84" cy="88" rx="10" ry="7" fill="#FF9EB5" opacity="0.7"/><path d="M44 80 Q50 75 56 80" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M64 80 Q70 75 76 80" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M52 97 Q60 104 68 97" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M18 54 Q30 38 46 52 Q60 36 74 52 Q90 38 102 54 Q94 66 84 58 Q72 70 60 62 Q48 70 36 58 Q26 66 18 54Z" fill="#3355AA" stroke="#2244AA" stroke-width="1.5"/><ellipse cx="60" cy="55" rx="35" ry="27" fill="#4466BB"/><path d="M28 46 Q60 32 92 46" stroke="#fff" stroke-width="2.5" fill="none"/><path d="M34 39 Q60 26 86 39" stroke="#fff" stroke-width="2" fill="none"/><ellipse cx="41" cy="59" rx="13" ry="11" fill="#fff"/><ellipse cx="79" cy="59" rx="13" ry="11" fill="#fff"/><ellipse cx="41" cy="59" rx="8" ry="8" fill="#1133AA"/><ellipse cx="79" cy="59" rx="8" ry="8" fill="#1133AA"/><circle cx="41" cy="59" r="4.5" fill="#111"/><circle cx="79" cy="59" r="4.5" fill="#111"/><circle cx="43" cy="57" r="1.8" fill="#fff"/><circle cx="81" cy="57" r="1.8" fill="#fff"/><path d="M27 52 Q40 44 54 53" stroke="#2244CC" stroke-width="6" fill="none" stroke-linecap="round"/><path d="M66 53 Q80 44 93 52" stroke="#2244CC" stroke-width="6" fill="none" stroke-linecap="round"/><ellipse cx="60" cy="76" rx="9" ry="6" fill="#2244AA"/><path d="M36 92 Q60 106 84 92" fill="#CC3333" stroke="#aa2222" stroke-width="2"/><path d="M42 92 Q60 102 78 92" fill="#fff"/><path d="M24 58 Q36 48 50 56 Q64 48 78 56 Q92 48 98 58" stroke="#fff" stroke-width="2.5" fill="none"/><path d="M14 70 Q20 84 16 97" stroke="#2244BB" stroke-width="5" fill="none" stroke-linecap="round"/><path d="M106 70 Q100 84 104 97" stroke="#2244BB" stroke-width="5" fill="none" stroke-linecap="round"/><circle cx="38" cy="42" r="4" fill="#FF4444" stroke="#CC2222" stroke-width="1"/><circle cx="82" cy="42" r="4" fill="#FF4444" stroke="#CC2222" stroke-width="1"/></svg>` },
+  { name:"窦尔敦", color:"#3355AA", svg:`<svg viewBox="0 0 120 160" xmlns="http://www.w3.org/2000/svg"><ellipse cx="60" cy="92" rx="46" ry="42" fill="#FFF0E8" stroke="#3D2B1F" stroke-width="3"/><ellipse cx="36" cy="88" rx="10" ry="7" fill="#FF9EB5" opacity="0.7"/><ellipse cx="84" cy="88" rx="10" ry="7" fill="#FF9EB5" opacity="0.7"/><path d="M44 80 Q50 75 56 80" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M64 80 Q70 75 76 80" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M52 97 Q60 104 68 97" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M18 54 Q30 38 46 52 Q60 36 74 52 Q90 38 102 54 Q94 66 84 58 Q72 70 60 62 Q48 70 36 58 Q26 66 18 54Z" fill="#3355AA" stroke="#2244AA" stroke-width="1.5"/><ellipse cx="60" cy="55" rx="35" ry="27" fill="#4466BB"/><path d="M28 46 Q60 32 92 46" stroke="#fff" stroke-width="2.5" fill="none"/><path d="M34 39 Q60 26 86 39" stroke="#fff" stroke-width="2" fill="none"/><ellipse cx="41" cy="59" rx="13" ry="11" fill="#fff"/><ellipse cx="79" cy="59" rx="13" ry="11" fill="#fff"/><ellipse cx="41" cy="59" rx="8" ry="8" fill="#1133AA"/><ellipse cx="79" cy="59" rx="8" ry="8" fill="#1133AA"/><circle cx="41" cy="59" r="4.5" fill="#111"/><circle cx="79" cy="59" r="4.5" fill="#111"/><circle cx="43" cy="57" r="1.8" fill="#fff"/><circle cx="81" cy="57" r="1.8" fill="#fff"/><path d="M27 52 Q40 44 54 53" stroke="#2244CC" stroke-width="6" fill="none" stroke-linecap="round"/><path d="M66 53 Q80 44 93 52" stroke="#2244CC" stroke-width="6" fill="none" stroke-linecap="round"/><ellipse cx="60" cy="76" rx="9" ry="6" fill="#2244AA"/><path d="M36 92 Q60 106 84 92" fill="#CC3333" stroke="#aa2222" stroke-width="2"/><path d="M42 92 Q60 102 78 92" fill="#fff"/><path d="M24 58 Q36 48 50 56 Q64 48 78 56 Q92 48 98 58" stroke="#fff" stroke-width="2.5" fill="none"/><path d="M14 70 Q20 84 16 97" stroke="#2244BB" stroke-width="5" fill="none" stroke-linecap="round"/><path d="M106 70 Q100 84 104 97" stroke="#2244BB" stroke-width="5" fill="none" stroke-linecap="round"/><circle cx="38" cy="42" r="4" fill="#FF4444" stroke="#CC2222" stroke-width="1"/><circle cx="82" cy="42" r="4" fill="#FF4444" stroke="#CC2222" stroke-width="1"/></svg>` },
   // ── 典韦：黄脸猛将 ──
   { name:"典韦", color:"#8B4513", svg:`<svg viewBox="0 0 120 160" xmlns="http://www.w3.org/2000/svg"><ellipse cx="60" cy="92" rx="46" ry="42" fill="#FFF0E8" stroke="#3D2B1F" stroke-width="3"/><ellipse cx="36" cy="88" rx="10" ry="7" fill="#FF9EB5" opacity="0.7"/><ellipse cx="84" cy="88" rx="10" ry="7" fill="#FF9EB5" opacity="0.7"/><path d="M42 79 Q50 73 57 80" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M63 80 Q70 73 78 79" stroke="#3D2B1F" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M52 98 Q60 106 68 98" stroke="#3D2B1F" stroke-width="2.5" fill="none" stroke-linecap="round"/><path d="M16 54 Q28 38 44 52 Q58 36 72 52 Q88 38 100 54 Q92 67 82 58 Q70 71 60 63 Q50 71 38 58 Q28 67 16 54Z" fill="#B8860B" stroke="#8B6508" stroke-width="1.5"/><ellipse cx="60" cy="54" rx="36" ry="28" fill="#CD9500"/><path d="M24 44 Q60 28 96 44" stroke="#FFD700" stroke-width="3" fill="none"/><path d="M32 36 Q60 22 88 36" stroke="#FF6600" stroke-width="2" fill="none"/><ellipse cx="41" cy="59" rx="14" ry="12" fill="#FFD700"/><ellipse cx="79" cy="59" rx="14" ry="12" fill="#FFD700"/><ellipse cx="41" cy="59" rx="9" ry="9" fill="#8B4513"/><ellipse cx="79" cy="59" rx="9" ry="9" fill="#8B4513"/><circle cx="41" cy="59" r="5" fill="#111"/><circle cx="79" cy="59" r="5" fill="#111"/><circle cx="43" cy="57" r="2" fill="#fff"/><circle cx="81" cy="57" r="2" fill="#fff"/><path d="M23 50 Q38 40 55 51" stroke="#222" stroke-width="8.5" fill="none" stroke-linecap="round"/><path d="M65 51 Q82 40 97 50" stroke="#222" stroke-width="8.5" fill="none" stroke-linecap="round"/><ellipse cx="60" cy="76" rx="11" ry="8" fill="#CC5500"/><path d="M34 94 Q60 110 86 94" fill="#990000" stroke="#660000" stroke-width="2"/><path d="M40 94 Q60 108 80 94" fill="#FF5555"/><path d="M12 68 Q18 85 14 100" stroke="#660000" stroke-width="6.5" fill="none" stroke-linecap="round"/><path d="M108 68 Q102 85 106 100" stroke="#660000" stroke-width="6.5" fill="none" stroke-linecap="round"/><circle cx="60" cy="26" r="6" fill="#FF4444" stroke="#CC2222" stroke-width="1.3"/><path d="M14 32 L6 12 L22 20 Z" fill="#5a3a1a"/><path d="M106 32 L114 12 L98 20 Z" fill="#5a3a1a"/></svg>` },
   // ── 婵娟：花旦美人，凤冠 ──
@@ -230,6 +265,11 @@ resizeCanvas();
 
 // ===== 摄像头 =====
 async function initCamera() {
+  // 检测是否支持getUserMedia
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showCameraError('您的浏览器不支持摄像头功能，请使用 Chrome 或 Edge 浏览器。');
+    return false;
+  }
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
@@ -238,9 +278,38 @@ async function initCamera() {
     await video.play();
     return true;
   } catch(e) {
-    alert('无法获取摄像头: ' + e.message);
+    let msg = '无法获取摄像头';
+    if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
+      msg = '❌ 摄像头权限被拒绝\n\n请在浏览器地址栏左侧点击🔒图标，将摄像头权限改为"允许"，然后刷新页面重试。';
+    } else if (e.name === 'NotFoundError') {
+      msg = '❌ 未找到摄像头设备\n\n请确认您的设备有摄像头，并且摄像头未被其他程序占用。';
+    } else if (e.name === 'NotReadableError') {
+      msg = '❌ 摄像头被占用\n\n请关闭其他使用摄像头的程序（如腾讯会议、Zoom等），然后重试。';
+    } else {
+      msg = '❌ 摄像头错误：' + e.message + '\n\n游戏将切换为鼠标/触摸操控模式。';
+    }
+    showCameraError(msg);
     return false;
   }
+}
+
+function showCameraError(msg) {
+  const el = document.getElementById('camera-error');
+  el.style.display = 'flex';
+  el.querySelector('.err-msg').textContent = msg.replace(/\n\n/g, '\n').replace(/\n/g, ' ');
+}
+
+function startWithoutCamera() {
+  document.getElementById('camera-error').style.display = 'none';
+  // 设置黑色背景
+  document.body.style.background = '#111';
+  // 跳过摄像头直接开始游戏
+  _startGameInner();
+}
+
+function retryCamera() {
+  document.getElementById('camera-error').style.display = 'none';
+  startGame();
 }
 
 // ===== 肤色检测（优化版） =====
@@ -685,13 +754,17 @@ function gameLoop() {
 async function startGame() {
   document.getElementById('start-screen').style.display = 'none';
   const ok = await initCamera();
-  if (!ok) { document.getElementById('start-screen').style.display = 'flex'; return; }
+  if (!ok) return; // showCameraError已处理，等用户选择
 
   await new Promise(r => {
     if (video.readyState >= 2) r();
     else video.onloadeddata = r;
   });
 
+  _startGameInner();
+}
+
+function _startGameInner() {
   document.getElementById('score-bar').style.display = 'flex';
   document.getElementById('hint').style.display = 'block';
   updateUI();
@@ -727,30 +800,10 @@ function restartGame() {
   caughtMasks = [];
   gameRunning = false;
   maskObjs = [];
-
   document.getElementById('win-screen').style.display = 'none';
   areaHistory = [];
   recentMaxArea = 0;
-  handBlobArea = 0;
-  smoothHandPos = { x: -1, y: -1 };
-  rawHandPos = { x: -1, y: -1 };
-  handVisible = false;
-  handLostFrames = 0;
-  isGrabbing = false;
-  wasGrabbing = false;
-  grabCooldown = 0;
-
-  maskObjs = MASKS.map((m, i) => new MaskObj(m, i));
-  updateUI();
-
-  gameRunning = true;
-  gameWon = false;
-  gameLoop();
-
-  setTimeout(() => {
-    document.getElementById('hint').style.display = 'block';
-    setTimeout(() => { document.getElementById('hint').style.display = 'none'; }, 5000);
-  }, 200);
+  _startGameInner();
 }
 </script>
 </body>
