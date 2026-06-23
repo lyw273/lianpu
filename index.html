@@ -6,11 +6,21 @@
 <title>脸谱大师 - 手势抓取游戏</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-html, body { width: 100%; height: 100%; overflow: hidden; background: linear-gradient(180deg, #87CEEB 0%, #E0F4FF 50%, #98D8AA 100%); font-family: "PingFang SC","Microsoft YaHei",sans-serif; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1a2e; font-family: "PingFang SC","Microsoft YaHei",sans-serif; }
 
-#video { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; transform: scaleX(-1); z-index: 0; opacity: 0.3; }
+/* 摄像头视频 - 前置主视觉层 */
+#video { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; transform: scaleX(-1); z-index: 0; opacity: 0.88; }
 
+/* 虚化背景层 - 对视频进行背景虚化 */
+#blur-layer { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; pointer-events: none; backdrop-filter: blur(3px); background: transparent; }
+
+/* 游戏画布层 - 半透明叠加 */
 #overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; pointer-events: none; }
+
+/* 虚化遮罩 - 非手部区域轻微虚化效果 */
+#vignette { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 30%, rgba(10,10,30,0.35) 100%);
+}
 
 /* ===== 白色卡通手套指示器 ===== */
 .glove-indicator {
@@ -29,10 +39,11 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: linear-gra
 #game-ui-bar {
   position: fixed; top: 15px; left: 50%; transform: translateX(-50%);
   display: none; align-items: center; gap: 20px;
-  background: rgba(255,255,255,0.92); border-radius: 40px;
+  background: rgba(255,255,255,0.85); border-radius: 40px;
   padding: 10px 28px; z-index: 5;
   box-shadow: 0 4px 20px rgba(0,0,0,0.12), 0 1px 3px rgba(0,0,0,0.08);
   border: 2px solid rgba(255,215,0,0.4);
+  backdrop-filter: blur(6px);
 }
 #timer-display {
   font-size: 1.3rem; font-weight: bold; color: #CC3333;
@@ -48,10 +59,11 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: linear-gra
 
 #hint {
   position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
-  background: rgba(255,255,255,0.9); color: #555; padding: 12px 28px;
+  background: rgba(255,255,255,0.85); color: #555; padding: 12px 28px;
   border-radius: 30px; font-size: 1.05rem; z-index: 5; display: none;
   border: 1px solid rgba(255,215,0,0.3); text-align: center;
   box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+  backdrop-filter: blur(6px);
 }
 
 /* ===== 抓取提示toast ===== */
@@ -63,6 +75,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: linear-gra
   display: none; align-items: center; gap: 14px;
   box-shadow: 0 4px 25px rgba(255,215,0,0.3);
   opacity: 0; transition: opacity 0.3s, transform 0.3s;
+  backdrop-filter: blur(8px);
 }
 #catch-toast.show { display: flex; opacity: 1; transform: translateX(-50%) translateY(0); }
 #catch-toast .char-icon { width: 55px; height: 55px; }
@@ -73,9 +86,10 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: linear-gra
 /* ===== 开始界面 ===== */
 #start-screen {
   position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-  background: linear-gradient(180deg, #87CEEB 0%, #B8E6F0 40%, #C8E6C9 70%, #A5D6A7 100%);
+  background: linear-gradient(180deg, rgba(135,206,235,0.9) 0%, rgba(184,230,240,0.85) 40%, rgba(200,230,201,0.85) 70%, rgba(165,214,167,0.9) 100%);
   z-index: 100; display: flex; flex-direction: column;
   align-items: center; justify-content: center; color: #fff;
+  backdrop-filter: blur(10px);
 }
 #start-screen h1 {
   font-size: 2.6rem; color: #CC3333;
@@ -102,7 +116,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: linear-gra
   position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
   background: rgba(0,0,0,0.6); z-index: 200;
   display: none; flex-direction: column; align-items: center; justify-content: center;
-  backdrop-filter: blur(4px);
+  backdrop-filter: blur(8px);
 }
 #result-card {
   background: linear-gradient(180deg, #FFF9E6, #FFFFFF);
@@ -190,6 +204,8 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: linear-gra
 <body>
 
 <video id="video" autoplay muted playsinline></video>
+<div id="blur-layer"></div>
+<div id="vignette"></div>
 <canvas id="overlay"></canvas>
 
 <div id="game-ui-bar">
@@ -239,85 +255,63 @@ const CHARACTERS = [
   {
     name:"关羽", points:150,
     svg:`<svg viewBox="0 0 120 140" xmlns="http://www.w3.org/2000/svg">
-      <!-- 脸型 -->
       <ellipse cx="60" cy="78" rx="38" ry="34" fill="#FFE8DC" stroke="#4A3728" stroke-width="2.5"/>
-      <!-- 腮红 -->
       <ellipse cx="38" cy="76" rx="9" ry="6" fill="#FF9999" opacity="0.55"/>
       <ellipse cx="82" cy="76" rx="9" ry="6" fill="#FF9999" opacity="0.55"/>
-      <!-- 眼睛 - 丹凤眼弯弯 -->
       <path d="M42 72 Q48 67 54 72" stroke="#4A3728" stroke-width="2" fill="none" stroke-linecap="round"/>
       <path d="M66 72 Q72 67 78 72" stroke="#4A3728" stroke-width="2" fill="none" stroke-linecap="round"/>
-      <!-- 嘴巴微笑 -->
       <path d="M52 88 Q60 94 68 88" stroke="#4A3728" stroke-width="2" fill="none" stroke-linecap="round"/>
-      <!-- 红色脸部区域 -->
       <path d="M18 46 Q30 34 45 46 Q60 32 75 46 Q90 34 102 46 Q96 56 86 50 Q74 60 60 54 Q48 60 36 50 Q26 56 18 46Z"
         fill="#DD2222" stroke="#AA1111" stroke-width="1.2"/>
       <ellipse cx="60" cy="46" rx="32" ry="22" fill="#EE3333"/>
-      <!-- 金色头饰线 -->
       <path d="M28 40 Q60 28 92 40" stroke="#FFD700" stroke-width="2.2" fill="none"/>
       <path d="M34 35 Q60 24 86 35" stroke="#FFD700" stroke-width="1.4" fill="none"/>
-      <!-- 眼睛（红色脸上的） -->
       <ellipse cx="43" cy="50" rx="10" ry="8" fill="#222"/>
       <ellipse cx="77" cy="50" rx="10" ry="8" fill="#222"/>
       <circle cx="45" cy="49" r="5" fill="#fff"/><circle cx="79" cy="49" r="5" fill="#fff"/>
       <circle cx="46" cy="48" r="2.5" fill="#222"/><circle cx="80" cy="48" r="2.5" fill="#222"/>
       <circle cx="47" cy="47" r="1" fill="#fff"/><circle cx="81" cy="47" r="1" fill="#fff"/>
-      <!-- 浓眉 -->
       <path d="M28 44 Q38 38 50 46" stroke="#2a1a0a" stroke-width="4.5" fill="none" stroke-linecap="round"/>
       <path d="M70 46 Q82 38 92 44" stroke="#2a1a0a" stroke-width="4.5" fill="none" stroke-linecap="round"/>
-      <!-- 鼻子 -->
       <path d="M58 62 L60 66 L62 62" stroke="#CC6644" stroke-width="1.8" fill="none"/>
-      <!-- 凤翅盔主体 -->
       <rect x="22" y="22" width="76" height="18" rx="8" fill="#AA0000" stroke="#880000" stroke-width="1.2"/>
-      <!-- 头盔装饰球 -->
       <circle cx="60" cy="20" r="7" fill="#FF4444" stroke="#CC0000" stroke-width="1"/>
       <circle cx="60" cy="20" r="3.5" fill="#FFD700"/>
-      <!-- 长翎（左右） -->
       <path d="M26 24 Q10 8 6 28 Q14 18 22 28" fill="#554433" stroke="#332211" stroke-width="1"/>
       <path d="M8 26 Q0 6 2 30 Q8 18 14 26" fill="#776655" stroke="#443322" stroke-width="1"/>
       <path d="M94 24 Q110 8 114 28 Q106 18 98 28" fill="#554433" stroke="#332211" stroke-width="1"/>
       <path d="M112 26 Q120 6 118 30 Q112 18 106 26" fill="#776655" stroke="#443322" stroke-width="1"/>
-      <!-- 盔上装饰 -->
       <circle cx="32" cy="30" r="4" fill="#FFD700" stroke="#CC9900" stroke-width="0.8"/>
       <circle cx="88" cy="30" r="4" fill="#FFD700" stroke="#CC9900" stroke-width="0.8"/>
-      <!-- 花饰 -->
       <circle cx="26" cy="42" r="5" fill="#66CCFF" stroke="#4499DD" stroke-width="0.8"/>
       <circle cx="94" cy="42" r="5" fill="#FF99CC" stroke="#CC6699" stroke-width="0.8"/>
-      <!-- 下垂装饰 -->
       <path d="M24 48 L20 65" stroke="#FFD700" stroke-width="2"/>
       <circle cx="19" cy="67" r="3" fill="#FFD700"/>
       <path d="M96 48 L100 65" stroke="#FFD700" stroke-width="2"/>
       <circle cx="101" cy="67" r="3" fill="#FFD700"/>
-      <!-- 脸颊红 -->
       <path d="M24 58 Q18 70 22 82" stroke="#FFD700" stroke-width="1.5" fill="none"/>
       <path d="M96 58 Q102 70 98 82" stroke="#FFD700" stroke-width="1.5" fill="none"/>
       <path d="M28 84 Q60 94 92 84" stroke="#AA3333" stroke-width="2.5" fill="none"/>
-      <!-- 身体示意 -->
       <path d="M36 108 Q60 118 84 108 L82 130 Q60 138 38 130Z" fill="#DD2222" stroke="#AA1111" stroke-width="1.5"/>
       <ellipse cx="60" cy="120" rx="18" ry="8" fill="#FFD700" opacity="0.6"/>
     </svg>`
   },
-  // ── 2. 孙悟空：金箍，火眼金睛，红脸蛋 ──
+  // ── 2. 孙悟空：金箍，火眼金睛 ──
   {
     name:"孙悟空", points:200,
     svg:`<svg viewBox="0 0 120 140" xmlns="http://www.w3.org/2000/svg">
       <ellipse cx="60" cy="78" rx="38" ry="34" fill="#FFE8DC" stroke="#4A3728" stroke-width="2.5"/>
       <ellipse cx="36" cy="74" rx="10" ry="7" fill="#FF9999" opacity="0.55"/>
       <ellipse cx="84" cy="74" rx="10" ry="7" fill="#FF9999" opacity="0.55"/>
-      <!-- 弯弯眼 -->
       <path d="M41 71 Q48 66 55 72" stroke="#4A3728" stroke-width="2" fill="none" stroke-linecap="round"/>
       <path d="M65 72 Q72 66 79 71" stroke="#4A3728" stroke-width="2" fill="none" stroke-linecap="round"/>
-      <!-- 嘴 -->
       <ellipse cx="60" cy="88" rx="6" ry="4" fill="#FF8888"/>
       <circle cx="56" cy="87" r="2" fill="#DD6666"/><circle cx="64" cy="87" r="2" fill="#DD6666"/>
-      <!-- 金黄色脸部 -->
       <path d="M16 44 Q28 32 44 45 Q58 30 72 45 Q88 32 100 44 Q93 57 83 49 Q72 61 60 54 Q49 61 38 49 Q27 57 16 44Z"
         fill="#F5D878" stroke="#D4B85A" stroke-width="1.2"/>
       <ellipse cx="60" cy="45" rx="35" ry="25" fill="#FFE8A0"/>
-      <!-- 金箍 -->
       <rect x="16" y="30" width="88" height="12" rx="6" fill="#FFD700" stroke="#CC9900" stroke-width="1.5"/>
       <ellipse cx="60" cy="36" rx="8" ry="4.5" fill="#FF6B00"/>
-      <!-- 火眼金睛 -->
       <ellipse cx="41" cy="50" rx="11" ry="9" fill="#FF4444"/>
       <ellipse cx="79" cy="50" rx="11" ry="9" fill="#FF4444"/>
       <ellipse cx="41" cy="50" rx="7" ry="7" fill="#FFD700"/>
@@ -325,121 +319,95 @@ const CHARACTERS = [
       <circle cx="41" cy="50" r="4" fill="#333"/>
       <circle cx="79" cy="50" r="4" fill="#333"/>
       <circle cx="43" cy="48" r="1.8" fill="#fff"/><circle cx="81" cy="48" r="1.8" fill="#fff"/>
-      <!-- 眉毛 -->
       <path d="M25 42 Q38 34 53 44" stroke="#333" stroke-width="4.5" fill="none" stroke-linecap="round"/>
       <path d="M67 44 Q82 34 95 42" stroke="#333" stroke-width="4.5" fill="none" stroke-linecap="round"/>
-      <!-- 鼻子 -->
       <path d="M57 63 Q60 68 63 63" stroke="#CC8844" stroke-width="1.8" fill="none"/>
-      <!-- 装饰 -->
       <path d="M34 86 Q60 100 86 86" fill="#DD4444" stroke="#AA2222" stroke-width="1.5"/>
       <path d="M40 86 Q60 98 80 86" fill="#fff"/>
-      <!-- 猴毛 -->
       <path d="M14 48 Q10 62 14 76" stroke="#998877" stroke-width="3.5" fill="none" stroke-linecap="round"/>
       <path d="M106 48 Q102 62 106 76" stroke="#998877" stroke-width="3.5" fill="none" stroke-linecap="round"/>
-      <!-- 身体 -->
       <path d="M36 108 Q60 116 84 108 L82 130 Q60 137 38 130Z" fill="#FF8C00" stroke="#CC6600" stroke-width="1.5"/>
       <rect x="44" y="112" width="32" height="18" rx="4" fill="#FFD700" stroke="#CC9900" stroke-width="1"/>
       <ellipse cx="60" cy="121" rx="10" ry="5" fill="#FF4444"/>
     </svg>`
   },
-  // ── 3. 婵娟：花旦美人，眨眼，凤冠流苏 ──
+  // ── 3. 婵娟：花旦美人，wink眼 ──
   {
     name:"婵娟", points:120,
     svg:`<svg viewBox="0 0 120 140" xmlns="http://www.w3.org/2000/svg">
       <ellipse cx="60" cy="78" rx="38" ry="34" fill="#FFE8DC" stroke="#4A3728" stroke-width="2.5"/>
       <ellipse cx="34" cy="73" rx="10" ry="7" fill="#FF9999" opacity="0.6"/>
       <ellipse cx="86" cy="73" rx="10" ry="7" fill="#FF9999" opacity="0.6"/>
-      <!-- 左眼弯弯 右眼wink -->
       <path d="M40 71 Q47 66 54 71" stroke="#4A3728" stroke-width="2" fill="none" stroke-linecap="round"/>
       <path d="M66 69 Q73 66 80 71" stroke="#4A3728" stroke-width="2.2" fill="none" stroke-linecap="round"/>
-      <!-- wink眼 -->
       <path d="M67 69 Q73 65 79 70" stroke="#4A3728" stroke-width="2" fill="none" stroke-linecap="round"/>
-      <!-- 微笑嘴 -->
       <path d="M52 89 Q60 95 68 89" stroke="#CC6688" stroke-width="2" fill="none" stroke-linecap="round"/>
       <path d="M51 88 Q60 93 69 88" fill="#FF6688"/>
       <path d="M54 88 Q60 91 66 88" fill="#FF8899"/>
-      <!-- 黑发髻 -->
       <path d="M17 44 Q30 32 44 45 Q58 32 72 45 Q86 32 99 44 Q92 56 82 50 Q70 60 60 54 Q48 60 38 50 Q28 56 17 44Z"
         fill="#2A1A2A" stroke="#1A0A1A" stroke-width="1"/>
       <path d="M23 54 Q37 46 52 55 Q37 64 23 54Z" fill="#2A1A2A"/>
       <path d="M68 55 Q83 46 97 54 Q83 64 68 55Z" fill="#2A1A2A"/>
-      <!-- 眼睛 -->
       <ellipse cx="40" cy="62" rx="6" ry="5" fill="#443366"/>
       <ellipse cx="80" cy="62" rx="6" ry="5" fill="#443366"/>
       <circle cx="42" cy="61" r="2" fill="#fff"/><circle cx="82" cy="61" r="2" fill="#fff"/>
-      <!-- 眉毛 -->
       <path d="M26 53 Q37 46 51 54" stroke="#2A1A2A" stroke-width="2.5" fill="none"/>
       <path d="M69 54 Q83 46 94 53" stroke="#2A1A2A" stroke-width="2.5" fill="none"/>
-      <!-- 发髻顶饰 -->
       <circle cx="60" cy="28" r="6" fill="#FF69B4" stroke="#CC4488" stroke-width="1"/>
       <circle cx="60" cy="28" r="3" fill="#FFD700"/>
       <path d="M46 28 Q53 20 60 24 Q67 20 74 28" stroke="#FF69B4" stroke-width="1.8" fill="none"/>
-      <!-- 凤冠花饰 -->
       <circle cx="30" cy="38" r="5" fill="#66CCFF" stroke="#4499DD" stroke-width="0.8"/>
       <circle cx="90" cy="38" r="5" fill="#FF99CC" stroke="#CC6699" stroke-width="0.8"/>
       <circle cx="42" cy="32" r="4" fill="#FF6699" stroke="#CC4477" stroke-width="0.8"/>
       <circle cx="78" cy="32" r="4" fill="#99CCFF" stroke="#6699DD" stroke-width="0.8"/>
-      <!-- 流苏下垂 -->
       <line x1="28" y1="44" x2="22" y2="62" stroke="#FFD700" stroke-width="1.8"/>
       <circle cx="21" cy="64" r="2.5" fill="#FFD700"/>
       <line x1="92" y1="44" x2="98" y2="62" stroke="#FFD700" stroke-width="1.8"/>
       <circle cx="99" cy="64" r="2.5" fill="#FFD700"/>
       <line x1="60" y1="34" x2="60" y2="44" stroke="#FF69B4" stroke-width="1.5"/>
-      <!-- 耳环 -->
       <circle cx="18" cy="72" r="4" fill="#FFD700" stroke="#FF69B4" stroke-width="1"/>
       <circle cx="102" cy="72" r="4" fill="#FFD700" stroke="#FF69B4" stroke-width="1"/>
-      <!-- 身体 -->
       <path d="M36 108 Q60 115 84 108 L82 132 Q60 139 38 132Z" fill="#FF69B4" stroke="#CC4488" stroke-width="1.5"/>
       <ellipse cx="60" cy="120" rx="16" ry="7" fill="#FFD700" opacity="0.5"/>
     </svg>`
   },
-  // ── 4. 张飞：黑脸猛将，豹头环眼 ──
+  // ── 4. 张飞：黑脸猛将 ──
   {
     name:"张飞", points:130,
     svg:`<svg viewBox="0 0 120 140" xmlns="http://www.w3.org/2000/svg">
       <ellipse cx="60" cy="78" rx="38" ry="34" fill="#FFE8DC" stroke="#4A3728" stroke-width="2.5"/>
       <ellipse cx="36" cy="74" rx="10" ry="7" fill="#FF9999" opacity="0.5"/>
       <ellipse cx="84" cy="74" rx="10" ry="7" fill="#FF9999" opacity="0.5"/>
-      <!-- 粗眉怒眼 -->
       <path d="M42 70 Q50 64 57 72" stroke="#4A3728" stroke-width="2.2" fill="none" stroke-linecap="round"/>
       <path d="M63 72 Q70 64 78 70" stroke="#4A3728" stroke-width="2.2" fill="none" stroke-linecap="round"/>
-      <!-- 张嘴大笑 -->
       <path d="M50 86 Q60 97 70 86" stroke="#4A3728" stroke-width="2.5" fill="none" stroke-linecap="round"/>
       <path d="M50 86 Q60 102 70 86" fill="#CC3333"/>
       <path d="M53 87 Q60 96 67 87" fill="#FF6666"/>
-      <!-- 黑脸 -->
       <path d="M16 44 Q30 30 46 45 Q60 32 74 45 Q90 30 104 44 Q95 58 84 49 Q72 62 60 54 Q48 62 38 49 Q27 58 16 44Z"
         fill="#333340" stroke="#1A1A24" stroke-width="1.3"/>
       <ellipse cx="60" cy="46" rx="36" ry="27" fill="#444455"/>
-      <!-- 金色额纹 -->
       <path d="M24 38 Q60 24 96 38" stroke="#FFD700" stroke-width="2.3" fill="none"/>
       <circle cx="60" cy="30" r="6" fill="none" stroke="#FFD700" stroke-width="2"/>
-      <!-- 怒眼 -->
       <ellipse cx="40" cy="52" rx="12" ry="10" fill="#CC0000"/>
       <ellipse cx="80" cy="52" rx="12" ry="10" fill="#CC0000"/>
       <ellipse cx="40" cy="52" rx="8" ry="8" fill="#111"/>
       <ellipse cx="80" cy="52" rx="8" ry="8" fill="#111"/>
       <circle cx="42" cy="50" r="3" fill="#fff"/><circle cx="82" cy="50" r="3" fill="#fff"/>
       <circle cx="43" cy="49" r="1.3" fill="#fff"/><circle cx="83" cy="49" r="1.3" fill="#fff"/>
-      <!-- 粗黑眉 -->
       <path d="M24 44 Q38 34 54 48" stroke="#111" stroke-width="6" fill="none" stroke-linecap="round"/>
       <path d="M66 48 Q82 34 96 44" stroke="#111" stroke-width="6" fill="none" stroke-linecap="round"/>
-      <!-- 鼻子 -->
       <ellipse cx="60" cy="68" rx="8" ry="5" fill="#222"/>
-      <!-- 黑胡子 -->
       <path d="M34 84 Q60 100 86 84" fill="#CC0000" stroke="#111" stroke-width="2"/>
       <path d="M40 84 Q60 99 80 84" fill="#fff"/>
-      <!-- 头饰装饰 -->
       <path d="M14 60 Q18 78 14 94" stroke="#555" stroke-width="5" fill="none" stroke-linecap="round"/>
       <path d="M106 60 Q102 78 106 94" stroke="#555" stroke-width="5" fill="none" stroke-linecap="round"/>
       <circle cx="28" cy="36" r="5" fill="#888899"/>
       <circle cx="92" cy="36" r="5" fill="#888899"/>
-      <!-- 身体 -->
       <path d="M36 108 Q60 117 84 108 L82 131 Q60 139 38 131Z" fill="#333340" stroke="#1A1A24" stroke-width="1.5"/>
       <ellipse cx="60" cy="121" rx="16" ry="7" fill="#CC0000" opacity="0.5"/>
     </svg>`
   },
-  // ── 5. 包拯：黑面包公，月牙额头，乌纱帽 ──
+  // ── 5. 包拯：黑面包公，月牙额头 ──
   {
     name:"包拯", points:160,
     svg:`<svg viewBox="0 0 120 140" xmlns="http://www.w3.org/2000/svg">
@@ -449,37 +417,28 @@ const CHARACTERS = [
       <path d="M44 72 Q50 67 56 73" stroke="#4A3728" stroke-width="2.2" fill="none" stroke-linecap="round"/>
       <path d="M64 73 Q70 67 76 72" stroke="#4A3728" stroke-width="2.2" fill="none" stroke-linecap="round"/>
       <path d="M52 92 Q60 99 68 92" stroke="#4A3728" stroke-width="2.2" fill="none" stroke-linecap="round"/>
-      <!-- 乌纱帽 -->
       <rect x="18" y="36" width="84" height="20" rx="5" fill="#1A1A28" stroke="#0D0D18" stroke-width="1.5"/>
       <rect x="28" y="28" width="64" height="13" rx="5" fill="#222238"/>
       <circle cx="60" cy="25" r="5" fill="#FFD700" stroke="#CC9900" stroke-width="1"/>
-      <!-- 白脸 -->
       <path d="M20 48 Q32 38 46 50 Q60 36 74 50 Q88 38 100 48 Q93 60 82 52 Q70 63 60 56 Q48 63 38 52 Q28 60 20 48Z"
         fill="#EEE8F0" stroke="#CCCCEE" stroke-width="1.3"/>
       <ellipse cx="60" cy="50" rx="34" ry="24" fill="#F5F0F8"/>
-      <!-- 月牙 -->
       <path d="M52 42 Q60 36 68 42" stroke="#AAAACC" stroke-width="2.8" fill="none"/>
       <path d="M54 39 Q60 34 66 39" stroke="#99AADD" stroke-width="1.8" fill="none"/>
       <path d="M48 44 L60 38 L72 44" fill="#DDDDEE" stroke="#BBBCD0" stroke-width="1"/>
       <circle cx="60" cy="38" r="4.5" fill="none" stroke="#9999AA" stroke-width="1.5"/>
-      <!-- 怒目 -->
       <ellipse cx="42" cy="56" rx="11" ry="9" fill="#333355"/>
       <ellipse cx="78" cy="56" rx="11" ry="9" fill="#333355"/>
       <ellipse cx="42" cy="56" rx="7" ry="7" fill="#1A1A3A"/>
       <ellipse cx="78" cy="56" rx="7" ry="7" fill="#1A1A3A"/>
       <circle cx="44" cy="54" r="3" fill="#fff"/><circle cx="80" cy="54" r="3" fill="#fff"/>
-      <!-- 眉 -->
       <path d="M28 48 Q38 40 50 56" stroke="#444455" stroke-width="5" fill="none" stroke-linecap="round"/>
       <path d="M70 56 Q82 40 92 48" stroke="#444455" stroke-width="5" fill="none" stroke-linecap="round"/>
-      <!-- 鼻子 -->
       <path d="M54 68 Q60 75 66 68" stroke="#888899" stroke-width="2" fill="none"/>
-      <!-- 嘴 -->
       <path d="M42 88 Q60 96 78 88" stroke="#888899" stroke-width="2.5" fill="none"/>
       <path d="M48 88 Q60 95 72 88" fill="#CC6666"/>
-      <!-- 帽翅 -->
       <rect x="8" y="44" width="12" height="18" rx="2" fill="#1A1A28"/>
       <rect x="100" y="44" width="12" height="18" rx="2" fill="#1A1A28"/>
-      <!-- 身体 -->
       <path d="M36 110 Q60 118 84 110 L82 133 Q60 140 38 133Z" fill="#1A1A28" stroke="#0D0D18" stroke-width="1.5"/>
       <rect x="48" y="114" width="24" height="14" rx="3" fill="#222238"/>
       <ellipse cx="60" cy="122" rx="8" ry="4" fill="#FFD700" opacity="0.4"/>
@@ -495,14 +454,11 @@ const CHARACTERS = [
       <path d="M44 71 Q50 66 56 72" stroke="#4A3728" stroke-width="2.2" fill="none" stroke-linecap="round"/>
       <path d="M64 72 Q70 66 76 71" stroke="#4A3728" stroke-width="2.2" fill="none" stroke-linecap="round"/>
       <path d="M52 90 Q60 98 68 90" stroke="#4A3728" stroke-width="2.2" fill="none" stroke-linecap="round"/>
-      <!-- 蓝脸 -->
       <path d="M16 44 Q30 30 46 45 Q60 32 74 45 Q90 30 104 44 Q95 58 84 49 Q72 62 60 54 Q48 62 38 49 Q27 58 16 44Z"
         fill="#3366AA" stroke="#2244AA" stroke-width="1.3"/>
       <ellipse cx="60" cy="46" rx="35" ry="27" fill="#4477CC"/>
-      <!-- 白色额纹 -->
       <path d="M26 38 Q60 24 94 38" stroke="#ffffff" stroke-width="2.3" fill="none"/>
       <path d="M34 31 Q60 18 86 31" stroke="#ffffff" stroke-width="1.8" fill="none"/>
-      <!-- 眼睛 -->
       <ellipse cx="41" cy="52" rx="12" ry="10" fill="#fff"/>
       <ellipse cx="79" cy="52" rx="12" ry="10" fill="#fff"/>
       <ellipse cx="41" cy="52" rx="8" ry="8" fill="#2255AA"/>
@@ -510,20 +466,14 @@ const CHARACTERS = [
       <circle cx="41" cy="52" r="4.5" fill="#111"/>
       <circle cx="79" cy="52" r="4.5" fill="#111"/>
       <circle cx="43" cy="50" r="1.8" fill="#fff"/><circle cx="81" cy="50" r="1.8" fill="#fff"/>
-      <!-- 眉 -->
       <path d="M26 48 Q40 40 54 52" stroke="#2244CC" stroke-width="5.5" fill="none" stroke-linecap="round"/>
       <path d="M66 52 Q80 40 94 48" stroke="#2244CC" stroke-width="5.5" fill="none" stroke-linecap="round"/>
-      <!-- 鼻子 -->
       <ellipse cx="60" cy="68" rx="8" ry="5" fill="#2244AA"/>
-      <!-- 嘴 -->
       <path d="M36 86 Q60 102 84 86" fill="#CC3333" stroke="#AA2222" stroke-width="2"/>
       <path d="M42 86 Q60 101 78 86" fill="#fff"/>
-      <!-- 花纹边 -->
       <path d="M24 52 Q36 42 50 52 Q64 42 78 52 Q92 42 98 52" stroke="#fff" stroke-width="2.2" fill="none"/>
-      <!-- 头侧装饰 -->
       <path d="M14 64 Q20 82 16 98" stroke="#2244BB" stroke-width="4.5" fill="none" stroke-linecap="round"/>
       <path d="M106 64 Q100 82 104 98" stroke="#2244BB" stroke-width="4.5" fill="none" stroke-linecap="round"/>
-      <!-- 身体 -->
       <path d="M36 108 Q60 116 84 108 L82 131 Q60 139 38 131Z" fill="#3366AA" stroke="#2244AA" stroke-width="1.5"/>
       <ellipse cx="60" cy="121" rx="16" ry="7" fill="#FFD700" opacity="0.4"/>
     </svg>`
@@ -538,14 +488,11 @@ const CHARACTERS = [
       <path d="M42 70 Q50 64 57 72" stroke="#4A3728" stroke-width="2.2" fill="none" stroke-linecap="round"/>
       <path d="M63 72 Q70 64 78 70" stroke="#4A3728" stroke-width="2.2" fill="none" stroke-linecap="round"/>
       <path d="M52 92 Q60 100 68 92" stroke="#4A3728" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-      <!-- 黄脸 -->
       <path d="M14 44 Q28 30 44 45 Q58 30 72 45 Q88 30 102 44 Q93 59 82 49 Q70 63 60 54 Q48 63 38 49 Q27 59 14 44Z"
         fill="#B8860B" stroke="#8B6508" stroke-width="1.3"/>
       <ellipse cx="60" cy="46" rx="37" ry="28" fill="#CD9B00"/>
-      <!-- 金色额纹 -->
       <path d="M22 36 Q60 20 98 36" stroke="#FFD700" stroke-width="2.8" fill="none"/>
       <path d="M30 28 Q60 14 90 28" stroke="#FF6600" stroke-width="2" fill="none"/>
-      <!-- 金色大眼 -->
       <ellipse cx="40" cy="53" rx="13" ry="11" fill="#FFD700"/>
       <ellipse cx="80" cy="53" rx="13" ry="11" fill="#FFD700"/>
       <ellipse cx="40" cy="53" rx="9" ry="9" fill="#8B4513"/>
@@ -553,67 +500,49 @@ const CHARACTERS = [
       <circle cx="40" cy="53" r="5" fill="#111"/>
       <circle cx="80" cy="53" r="5" fill="#111"/>
       <circle cx="42" cy="51" r="2" fill="#fff"/><circle cx="82" cy="51" r="2" fill="#fff"/>
-      <!-- 粗眉 -->
       <path d="M22 44 Q38 34 56 50" stroke="#222" stroke-width="8" fill="none" stroke-linecap="round"/>
       <path d="M64 50 Q82 34 98 44" stroke="#222" stroke-width="8" fill="none" stroke-linecap="round"/>
-      <!-- 鼻子 -->
       <ellipse cx="60" cy="70" rx="10" ry="7" fill="#CC5500"/>
-      <!-- 张口 -->
       <path d="M34 88 Q60 106 86 88" fill="#990000" stroke="#660000" stroke-width="2"/>
       <path d="M40 88 Q60 105 80 88" fill="#FF5555"/>
-      <!-- 头侧 -->
       <path d="M12 64 Q18 84 14 100" stroke="#990000" stroke-width="6" fill="none" stroke-linecap="round"/>
       <path d="M108 64 Q102 84 106 100" stroke="#990000" stroke-width="6" fill="none" stroke-linecap="round"/>
-      <!-- 身体 -->
       <path d="M34 108 Q60 118 86 108 L83 132 Q60 140 37 132Z" fill="#B8860B" stroke="#8B6508" stroke-width="1.5"/>
       <ellipse cx="60" cy="121" rx="16" ry="7" fill="#990000" opacity="0.4"/>
     </svg>`
   },
-  // ── 8. 曹操：白脸奸雄，细眉狭眼 ──
+  // ── 8. 曹操：白脸奸雄 ──
   {
     name:"曹操", points:170,
     svg:`<svg viewBox="0 0 120 140" xmlns="http://www.w3.org/2000/svg">
       <ellipse cx="60" cy="78" rx="38" ry="34" fill="#FFE8DC" stroke="#4A3728" stroke-width="2.5"/>
       <ellipse cx="36" cy="74" rx="10" ry="7" fill="#FF9999" opacity="0.5"/>
       <ellipse cx="84" cy="74" rx="10" ry="7" fill="#FF9999" opacity="0.5"/>
-      <!-- 细长眼 -->
       <path d="M44 71 Q50 67 56 71" stroke="#4A3728" stroke-width="2.2" fill="none" stroke-linecap="round"/>
       <path d="M64 71 Q70 67 76 71" stroke="#4A3728" stroke-width="2.2" fill="none" stroke-linecap="round"/>
-      <!-- 细嘴角 -->
       <path d="M54 88 Q60 93 66 88" stroke="#C4956A" stroke-width="2" fill="none" stroke-linecap="round"/>
-      <!-- 白脸 -->
       <path d="M18 44 Q30 32 45 46 Q60 34 75 46 Q90 32 102 44 Q94 58 84 50 Q72 62 60 54 Q48 62 36 50 Q26 58 18 44Z"
         fill="#E8DCC8" stroke="#D4C4A8" stroke-width="1.3"/>
       <ellipse cx="60" cy="47" rx="35" ry="27" fill="#F0E8D8"/>
-      <!-- 淡眉线 -->
       <path d="M34 42 Q60 32 86 42" stroke="#C8A878" stroke-width="2" fill="none"/>
       <path d="M40 36 Q60 26 80 36" stroke="#C8A878" stroke-width="1.3" fill="none"/>
-      <!-- 细长眉 -->
       <path d="M28 56 Q40 50 54 58 Q40 66 28 56Z" fill="#3A2A1A"/>
       <path d="M66 58 Q80 50 92 56 Q80 66 66 58Z" fill="#3A2A1A"/>
-      <!-- 小眼睛 -->
       <ellipse cx="41" cy="60" rx="5.5" ry="4" fill="#4A3A2A"/>
       <ellipse cx="79" cy="60" rx="5.5" ry="4" fill="#4A3A2A"/>
       <circle cx="43" cy="59" r="1.5" fill="#fff"/><circle cx="81" cy="59" r="1.5" fill="#fff"/>
-      <!-- 眉 -->
       <path d="M27 54 Q40 48 54 56" stroke="#3A2A1A" stroke-width="3" fill="none"/>
       <path d="M66 56 Q80 48 93 54" stroke="#3A2A1A" stroke-width="3" fill="none"/>
-      <!-- 鼻子 -->
       <path d="M50 72 Q60 80 70 72" stroke="#A07850" stroke-width="2" fill="none"/>
-      <!-- 嘴 -->
       <path d="M44 88 Q60 94 76 88" stroke="#A07850" stroke-width="2.3" fill="none"/>
       <path d="M48 92 Q60 98 72 92" stroke="#CC9966" stroke-width="1.6" fill="none"/>
-      <!-- 宰相帽 -->
       <rect x="22" y="26" width="76" height="15" rx="6" fill="#2A2A1A" stroke="#1A1A0A" stroke-width="1.2"/>
       <rect x="32" y="20" width="56" height="10" rx="4" fill="#333330"/>
       <circle cx="60" cy="18" r="4" fill="#FFD700" stroke="#CC9900" stroke-width="0.8"/>
-      <!-- 帽翅 -->
       <path d="M14 34 L8 48 L16 46" fill="#2A2A1A" stroke="#1A1A0A" stroke-width="0.8"/>
       <path d="M106 34 L112 48 L104 46" fill="#2A2A1A" stroke="#1A1A0A" stroke-width="0.8"/>
-      <!-- 胡须暗示 -->
       <path d="M20 70 Q24 82 20 92" stroke="#C8A878" stroke-width="2.8" fill="none" stroke-linecap="round"/>
       <path d="M100 70 Q96 82 100 92" stroke="#C8A878" stroke-width="2.8" fill="none" stroke-linecap="round"/>
-      <!-- 身体 -->
       <path d="M36 108 Q60 116 84 108 L82 132 Q60 139 38 132Z" fill="#E8DCC8" stroke="#C8A878" stroke-width="1.5"/>
       <rect x="46" y="113" width="28" height="14" rx="3" fill="#2A2A1A"/>
       <ellipse cx="60" cy="121" rx="10" ry="4" fill="#FFD700" opacity="0.3"/>
@@ -625,59 +554,33 @@ const CHARACTERS = [
 //  白色卡通手套 SVG（张开 + 握拳）
 // ============================================================
 const GLOVE_OPEN_SVG = `<svg viewBox="0 0 70 80" xmlns="http://www.w3.org/2000/svg">
-  <!-- 手套主体 - 手掌 -->
   <ellipse cx="35" cy="52" rx="22" ry="20" fill="#FFFFFF" stroke="#DDE4ED" stroke-width="2"/>
-  <!-- 五指 -->
   <ellipse cx="18" cy="28" rx="7" ry="16" fill="#FFFFFF" stroke="#DDE4ED" stroke-width="2" transform="rotate(-18 18 28)"/>
   <ellipse cx="29" cy="18" rx="6.5" ry="17" fill="#FFFFFF" stroke="#DDE4ED" stroke-width="2" transform="rotate(-5 29 18)"/>
   <ellipse cx="41" cy="16" rx="6.5" ry="17" fill="#FFFFFF" stroke="#DDE4ED" stroke-width="2" transform="rotate(5 41 16)"/>
   <ellipse cx="52" cy="22" rx="6" ry="15" fill="#FFFFFF" stroke="#DDE4ED" stroke-width="2" transform="rotate(16 52 22)"/>
   <ellipse cx="58" cy="38" rx="5.5" ry="11" fill="#FFFFFF" stroke="#DDE4ED" stroke-width="2" transform="rotate(30 58 38)"/>
-  <!-- 手腕 -->
   <rect x="24" y="64" width="22" height="14" rx="6" fill="#FFFFFF" stroke="#DDE4ED" stroke-width="2"/>
-  <!-- 手掌纹理 -->
   <path d="M26 50 Q35 46 44 50" stroke="#E8ECF2" stroke-width="1.5" fill="none"/>
   <path d="M28 56 Q35 53 42 56" stroke="#E8ECF2" stroke-width="1.2" fill="none"/>
-  <!-- 高光 -->
   <ellipse cx="26" cy="44" rx="5" ry="3" fill="rgba(255,255,255,0.8)"/>
   <ellipse cx="21" cy="22" rx="3" ry="5" fill="rgba(255,255,255,0.7)" transform="rotate(-18 21 22)"/>
 </svg>`;
 
 const GLOVE_FIST_SVG = `<svg viewBox="0 0 70 80" xmlns="http://www.w3.org/2000/svg">
-  <!-- 握拳头套 - 圆形紧握 -->
   <ellipse cx="35" cy="45" rx="25" ry="24" fill="#FFFFFF" stroke="#DDE4ED" stroke-width="2.5"/>
-  <!-- 弯曲手指轮廓 -->
   <path d="M16 34 Q12 42 18 50" stroke="#DDE4ED" stroke-width="2.5" fill="none" stroke-linecap="round"/>
   <path d="M24 26 Q20 38 24 52" stroke="#DDE4ED" stroke-width="2.5" fill="none" stroke-linecap="round"/>
   <path d="M35 23 Q32 38 35 54" stroke="#DDE4ED" stroke-width="2.5" fill="none" stroke-linecap="round"/>
   <path d="M46 26 Q48 38 46 52" stroke="#DDE4ED" stroke-width="2.5" fill="none" stroke-linecap="round"/>
   <path d="M54 32 Q58 42 52 50" stroke="#DDE4ED" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-  <!-- 大拇指弯曲 -->
   <ellipse cx="54" cy="36" rx="6" ry="10" fill="#FFFFFF" stroke="#DDE4ED" stroke-width="2" transform="rotate(-25 54 36)"/>
-  <!-- 手腕 -->
   <rect x="23" y="62" width="24" height="15" rx="7" fill="#FFFFFF" stroke="#DDE4ED" stroke-width="2"/>
-  <!-- 拳节线条 -->
   <path d="M20 42 Q35 38 50 42" stroke="#E8ECF2" stroke-width="1.5" fill="none"/>
   <path d="M22 50 Q35 46 48 50" stroke="#E8ECF2" stroke-width="1.2" fill="none"/>
-  <!-- 高光 -->
   <ellipse cx="24" cy="34" rx="6" ry="4" fill="rgba(255,255,255,0.8)"/>
-  <!-- 握拳力度效果 -->
   <circle cx="35" cy="45" r="18" fill="none" stroke="rgba(200,220,255,0.3)" stroke-width="1.5" stroke-dasharray="3 3"/>
 </svg>`;
-
-
-// ============================================================
-//  云朵SVG（用于背景场景）
-// ============================================================
-function getCloudSVG(scale = 1) {
-  return `<svg viewBox="0 0 200 80" xmlns="http://www.w3.org/2000/svg" style="width:${200*scale}px;height:${80*scale}px">
-    <ellipse cx="60" cy="50" rx="45" ry="25" fill="rgba(255,255,255,0.85)"/>
-    <ellipse cx="100" cy="42" rx="55" ry="30" fill="rgba(255,255,255,0.9)"/>
-    <ellipse cx="145" cy="50" rx="40" ry="22" fill="rgba(255,255,255,0.85)"/>
-    <ellipse cx="80" cy="58" rx="50" ry="20" fill="rgba(255,255,255,0.8)"/>
-    <ellipse cx="125" cy="56" rx="45" ry="18" fill="rgba(255,255,255,0.8)"/>
-  </svg>`;
-}
 
 
 // ============================================================
@@ -700,16 +603,19 @@ let handPoints = [];
 let mouseInput = { x: -1, y: -1, active: false, down: false, wasDown: false };
 let touchPoints = [];
 
-
 // DOM
 const video = document.getElementById('video');
 const overlay = document.getElementById('overlay');
 const ctx = overlay.getContext('2d');
 
-// 独立检测画布
+// 独立检测画布（仅用于手势检测，不影响游戏渲染）
 const detCanvas = document.createElement('canvas');
-detCanvas.width = 160; detCanvas.height = 120;
+const DW = 160, DH = 120;
+detCanvas.width = DW; detCanvas.height = DH;
 const detCtx = detCanvas.getContext('2d', { willReadFrequently: true });
+
+// 前一帧像素数据（用于运动检测）
+let prevFrameData = null;
 
 // 手套指示器数组
 const gloveElements = [];
@@ -778,13 +684,13 @@ async function initCamera() {
   } catch(e) {
     let msg = '无法获取摄像头';
     if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
-      msg = '❌ 摄像头权限被拒绝\n请在浏览器地址栏左侧点击🔒图标，将摄像头权限改为"允许"，然后刷新页面重试。';
+      msg = '❌ 摄像头权限被拒绝 请在浏览器地址栏左侧点击图标，将摄像头权限改为"允许"，然后刷新页面重试。';
     } else if (e.name === 'NotFoundError') {
-      msg = '❌ 未找到摄像头设备\n请确认您的设备有摄像头，并且摄像头未被其他程序占用。';
+      msg = '❌ 未找到摄像头设备 请确认您的设备有摄像头，并且摄像头未被其他程序占用。';
     } else if (e.name === 'NotReadableError') {
-      msg = '❌ 摄像头被占用\n请关闭其他使用摄像头的程序（如腾讯会议、Zoom等），然后重试。';
+      msg = '❌ 摄像头被占用 请关闭其他使用摄像头的程序（如腾讯会议、Zoom等），然后重试。';
     } else {
-      msg = '❌ 摄像头错误：' + e.message + '\n游戏将切换为鼠标/触摸操控模式。';
+      msg = '❌ 摄像头错误：' + e.message + ' 游戏将切换为鼠标/触摸操控模式。';
     }
     showCameraError(msg);
     return false;
@@ -794,11 +700,14 @@ async function initCamera() {
 function showCameraError(msg) {
   const el = document.getElementById('camera-error');
   el.style.display = 'flex';
-  el.querySelector('.err-msg').textContent = msg.replace(/\n\n/g, '\n').replace(/\n/g, ' ');
+  el.querySelector('.err-msg').textContent = msg;
 }
 
 function startWithoutCamera() {
   document.getElementById('camera-error').style.display = 'none';
+  document.getElementById('video').style.display = 'none';
+  document.getElementById('blur-layer').style.display = 'none';
+  document.getElementById('vignette').style.display = 'none';
   document.body.style.background = 'linear-gradient(180deg, #87CEEB 0%, #E0F4FF 50%, #98D8AA 100%)';
   _startGameInner();
 }
@@ -809,12 +718,13 @@ function retryCamera() {
 }
 
 
-// ========== 肤色检测 ==========
-function isSkinHSV(r, g, b) {
+// ========== 精准肤色检测（仅手部）==========
+// 更严格的HSV阈值，专门针对手部肤色
+function isHandSkinHSV(r, g, b) {
   const max = Math.max(r, g, b), min = Math.min(r, g, b);
   const v = max / 255;
   const delta = max - min;
-  if (delta < 10) return false;
+  if (delta < 12) return false; // 提高最低色差要求，排除接近灰色的像素
   const s = delta / max;
   let h;
   if (max === r) h = ((g - b) / delta) % 6;
@@ -822,23 +732,37 @@ function isSkinHSV(r, g, b) {
   else h = (r - g) / delta + 4;
   h = h * 60;
   if (h < 0) h += 360;
-  return h >= 0 && h <= 65 && s >= 0.07 && s <= 0.92 && v >= 0.15;
+  // 更窄的色相范围：手部肤色通常在5-55度
+  // 更高的饱和度下限：排除过淡的像素
+  // 更精确的亮度范围
+  return h >= 5 && h <= 55 && s >= 0.12 && s <= 0.85 && v >= 0.20 && v <= 0.95;
 }
 
-function morphClean(mask, w, h) {
-  const out = new Uint8Array(w * h);
+// 形态学操作：膨胀+腐蚀，清理噪点
+function morphHandMask(mask, w, h) {
+  // 膨胀（3x3十字核）
+  const dilated = new Uint8Array(w * h);
   for (let y = 1; y < h - 1; y++) {
     for (let x = 1; x < w - 1; x++) {
-      if (mask[y*w+x] || mask[(y-1)*w+x] || mask[(y+1)*w+x] || mask[y*w+x-1] || mask[y*w+x+1]) out[y*w+x] = 1;
+      if (mask[y*w+x] || mask[(y-1)*w+x] || mask[(y+1)*w+x] ||
+          mask[y*w+x-1] || mask[y*w+x+1] ||
+          mask[(y-1)*w+x-1] || mask[(y-1)*w+x+1] ||
+          mask[(y+1)*w+x-1] || mask[(y+1)*w+x+1]) {
+        dilated[y*w+x] = 1;
+      }
     }
   }
-  const out2 = new Uint8Array(w * h);
-  for (let y = 1; y < h - 1; y++) {
-    for (let x = 1; x < w - 1; x++) {
-      if (out[y*w+x] && out[(y-1)*w+x] && out[(y+1)*w+x] && out[y*w+x-1] && out[y*w+x+1]) out2[y*w+x] = 1;
+  // 腐蚀（3x3十字核）
+  const eroded = new Uint8Array(w * h);
+  for (let y = 2; y < h - 2; y++) {
+    for (let x = 2; x < w - 2; x++) {
+      if (dilated[y*w+x] && dilated[(y-1)*w+x] && dilated[(y+1)*w+x] &&
+          dilated[y*w+x-1] && dilated[y*w+x+1]) {
+        eroded[y*w+x] = 1;
+      }
     }
   }
-  return out2;
+  return eroded;
 }
 
 function makeHandPoint() {
@@ -851,33 +775,96 @@ function makeHandPoint() {
 }
 
 
-// ========== 多手掌检测 ==========
+// ========== 运动检测 + 多手掌精准检测 ==========
 function detectSkinBlobs() {
   const vw = video.videoWidth, vh = video.videoHeight;
   if (vw === 0 || vh === 0) return;
 
   const sw = window.innerWidth, sh = window.innerHeight;
-  const DW = 160, DH = 120;
 
+  // 在检测画布上绘制视频帧
   detCtx.drawImage(video, 0, 0, DW, DH);
   const imgData = detCtx.getImageData(0, 0, DW, DH);
   const pixels = imgData.data;
 
+  // ===== 运动检测：与前一帧对比 =====
+  const motionMask = new Uint8Array(DW * DH);
+  if (prevFrameData) {
+    for (let i = 0; i < DW * DH; i++) {
+      const dr = Math.abs(pixels[i*4] - prevFrameData[i*4]);
+      const dg = Math.abs(pixels[i*4+1] - prevFrameData[i*4+1]);
+      const db = Math.abs(pixels[i*4+2] - prevFrameData[i*4+2]);
+      // 运动阈值：像素变化超过20才算运动
+      if (dr + dg + db > 45) motionMask[i] = 1;
+    }
+  }
+  // 保存当前帧用于下次对比
+  prevFrameData = new Uint8Array(pixels);
+
+  // ===== 肤色检测 =====
   const skinMask = new Uint8Array(DW * DH);
   for (let i = 0; i < DW * DH; i++) {
     const r = pixels[i*4], g = pixels[i*4+1], b = pixels[i*4+2];
-    if (isSkinHSV(r, g, b)) skinMask[i] = 1;
+    if (isHandSkinHSV(r, g, b)) skinMask[i] = 1;
   }
 
-  const cleaned = morphClean(skinMask, DW, DH);
+  // ===== 联合条件：肤色 + 运动（如果是首次帧则仅用肤色）=====
+  const combinedMask = new Uint8Array(DW * DH);
+  const hasMotion = prevFrameData !== null && motionMask.some(v => v);
+  for (let i = 0; i < DW * DH; i++) {
+    // 肤色是必须条件，运动是增强条件
+    // 如果有运动数据：肤色像素如果在运动区域附近（3px范围内有运动），则更可信
+    if (skinMask[i]) {
+      if (!hasMotion) {
+        // 首次帧无运动数据，仅用肤色
+        combinedMask[i] = 1;
+      } else {
+        // 检查附近是否有运动像素（3x3范围）
+        const x = i % DW, y = Math.floor(i / DW);
+        let nearMotion = false;
+        for (let dy = -3; dy <= 3; dy++) {
+          for (let dx = -3; dx <= 3; dx++) {
+            const nx = x + dx, ny = y + dy;
+            if (nx >= 0 && nx < DW && ny >= 0 && ny < DH && motionMask[ny*DW+nx]) {
+              nearMotion = true; break;
+            }
+          }
+          if (nearMotion) break;
+        }
+        // 运动区域内的肤色像素优先，非运动区域的肤色像素降低权重
+        combinedMask[i] = nearMotion ? 2 : 1; // 2=高置信度，1=低置信度
+      }
+    }
+  }
 
+  // 形态学清理
+  const cleanedMask = morphHandMask(combinedMask, DW, DH);
+
+  // ===== 面部排除区域 =====
+  // 通常面部在画面中上方居中，占较大面积
+  // 排除区域：上方40%的区域中，宽度中心60%的区域
+  const faceExcludeY = Math.floor(DH * 0.38);
+  const faceExcludeX1 = Math.floor(DW * 0.20);
+  const faceExcludeX2 = Math.floor(DW * 0.80);
+
+  // 在面部排除区域中，仅保留运动中的肤色像素（面部通常不动）
+  for (let y = 0; y < faceExcludeY; y++) {
+    for (let x = faceExcludeX1; x < faceExcludeX2; x++) {
+      if (combinedMask[y*DW+x] === 1) { // 低置信度（无运动）的肤色在面部区域 → 排除
+        cleanedMask[y*DW+x] = 0;
+      }
+    }
+  }
+
+  // ===== BFS连通区域检测 =====
   const visited = new Uint8Array(DW * DH);
   let blobs = [];
 
   for (let y = 0; y < DH; y++) {
     for (let x = 0; x < DW; x++) {
-      if (cleaned[y * DW + x] && !visited[y * DW + x]) {
-        let bx = 0, by = 0, bCount = 0;
+      if (cleanedMask[y * DW + x] && !visited[y * DW + x]) {
+        let bx = 0, by = 0, bCount = 0, bHighCount = 0;
+        let minX = x, maxX = x, minY = y, maxY = y;
         const queue = [y * DW + x];
         visited[y * DW + x] = 1;
         let head = 0;
@@ -885,48 +872,70 @@ function detectSkinBlobs() {
           const idx = queue[head++];
           const qx = idx % DW, qy = Math.floor(idx / DW);
           bx += qx; by += qy; bCount++;
+          if (combinedMask[idx] === 2) bHighCount++;
+          if (qx < minX) minX = qx;
+          if (qx > maxX) maxX = qx;
+          if (qy < minY) minY = qy;
+          if (qy > maxY) maxY = qy;
+          // 4方向扩展
           const ns = [idx-1, idx+1, idx-DW, idx+DW];
           for (const ni of ns) {
             const nx = ni % DW, ny = Math.floor(ni / DW);
-            if (ni >= 0 && ni < DW*DH && nx >= 0 && nx < DW && !visited[ni] && cleaned[ni]) {
+            if (ni >= 0 && ni < DW*DH && nx >= 0 && nx < DW && !visited[ni] && cleanedMask[ni]) {
               visited[ni] = 1; queue.push(ni);
             }
           }
         }
-        if (bCount > 25) {
-          const normX = 1 - (bx / bCount) / DW;
-          const normY = (by / bCount) / DH;
-          blobs.push({ cx: normX * sw, cy: normY * sh, normX, normY, area: bCount });
-        }
+
+        // 手部blob过滤条件
+        const blobW = maxX - minX + 1;
+        const blobH = maxY - minY + 1;
+        const aspectRatio = blobW / Math.max(1, blobH);
+
+        // 最小面积：手部至少30像素
+        if (bCount < 30) continue;
+
+        // 最大面积：排除过大的区域（通常是面部+身体）
+        if (bCount > 800) continue;
+
+        // 形状过滤：手部blob的长宽比应在合理范围
+        // 手掌张开大约1:1~1.5:1，握拳更圆
+        // 过于细长的blob（aspectRatio>3或<0.2）可能是手臂或其他部位
+        if (aspectRatio > 3.0 || aspectRatio < 0.2) continue;
+
+        // 运动置信度：至少20%的像素有运动
+        // 如果几乎所有像素都静止，可能是面部或静止身体部位
+        if (hasMotion && bHighCount / bCount < 0.15 && bCount > 150) continue;
+
+        // 位置过滤：手部通常在画面下方60%的区域
+        const normX = 1 - (bx / bCount) / DW; // 水平镜像
+        const normY = (by / bCount) / DH;
+
+        // 如果blob完全在上方30%区域内且面积大于150，很可能是面部 → 排除
+        if (normY < 0.30 && bCount > 120) continue;
+
+        // 如果blob在中间区域且面积大于300，可能是面部+颈部 → 排除
+        if (normY < 0.45 && bCount > 300 && normX > 0.25 && normX < 0.75) continue;
+
+        blobs.push({
+          cx: normX * sw, cy: normY * sh, normX, normY,
+          area: bCount, highConfRatio: bHighCount / bCount,
+          aspectRatio, blobW, blobH
+        });
       }
     }
   }
 
-  blobs.sort((a, b) => b.area - a.area);
+  // 按置信度排序（运动比例高的优先）
+  blobs.sort((a, b) => (b.highConfRatio * b.area) - (a.highConfRatio * a.area));
 
-  let handBlobs = [];
-  const MIN_HAND_AREA = 30;
-  const MAX_HAND_AREA = 2000;
+  // 取最可能的2个手部blob
+  let handBlobs = blobs.slice(0, MAX_HANDS);
 
-  if (blobs.length === 0) {
-    handBlobs = [];
-  } else if (blobs.length === 1) {
-    const b = blobs[0];
-    if (b.normY > 0.4 || b.normX < 0.15 || b.normX > 0.85) {
-      handBlobs = [b];
-    } else {
-      handBlobs = [];
-    }
-  } else {
-    const rest = blobs.slice(1).filter(b => b.area >= MIN_HAND_AREA && b.area <= MAX_HAND_AREA);
-    handBlobs = rest.slice(0, MAX_HANDS);
-    if (handBlobs.length === 0 && blobs.length >= 2) {
-      handBlobs = blobs.slice(1, 1 + MAX_HANDS);
-    }
-  }
-
+  // 确保handPoints数组足够
   while (handPoints.length < MAX_HANDS) handPoints.push(makeHandPoint());
 
+  // ===== 贪心最近距离匹配 =====
   const used = new Array(MAX_HANDS).fill(false);
   const assigned = new Array(handBlobs.length).fill(-1);
 
@@ -946,6 +955,7 @@ function detectSkinBlobs() {
     if (bestHi !== -1) { used[bestHi] = true; assigned[bi] = bestHi; }
   }
 
+  // 更新handPoints
   for (let bi = 0; bi < handBlobs.length; bi++) {
     const hi = assigned[bi];
     if (hi === -1) continue;
@@ -954,7 +964,7 @@ function detectSkinBlobs() {
     hp.prevArea = hp.area; hp.area = blob.area;
     hp.rawX = blob.cx; hp.rawY = blob.cy;
     hp.visible = true; hp.lostFrames = 0;
-    const SMOOTH = 0.4;
+    const SMOOTH = 0.45; // 平滑系数
     if (hp.smoothX < 0) { hp.smoothX = hp.rawX; hp.smoothY = hp.rawY; }
     else {
       hp.smoothX += (hp.rawX - hp.smoothX) * SMOOTH;
@@ -964,16 +974,18 @@ function detectSkinBlobs() {
     hp.smoothY = Math.max(0, Math.min(sh, hp.smoothY));
   }
 
+  // 处理丢失的手点
   for (let hi = 0; hi < MAX_HANDS; hi++) {
     if (used[hi]) continue;
     const hp = handPoints[hi];
     hp.lostFrames++;
-    if (hp.lostFrames > 8) {
+    if (hp.lostFrames > 6) { // 更快丢失（6帧而非8帧）
       hp.visible = false; hp.smoothX = -1; hp.smoothY = -1;
       hp.area = 0; hp.prevArea = 0; hp.areaHistory = []; hp.maxArea = 0;
     }
   }
 
+  // 鼠标输入
   if (mouseInput.active) {
     let slot = handPoints.find(hp => !hp.visible);
     if (mouseInput.down) {
@@ -984,6 +996,7 @@ function detectSkinBlobs() {
     }
   }
 
+  // 触摸输入
   if (touchPoints.length > 0) {
     for (let ti = 0; ti < Math.min(touchPoints.length, MAX_HANDS); ti++) {
       const tp = touchPoints[ti];
@@ -997,8 +1010,8 @@ function detectSkinBlobs() {
 
 
 // ========== 握拳检测 ==========
-const GRAB_THRESHOLD = 0.50;
-const AREA_HISTORY_LEN = 18;
+const GRAB_THRESHOLD = 0.48;
+const AREA_HISTORY_LEN = 16;
 
 function detectGrabGesture() {
   for (const hp of handPoints) {
@@ -1008,7 +1021,7 @@ function detectGrabGesture() {
       hp.areaHistory.push(hp.area);
       if (hp.areaHistory.length > AREA_HISTORY_LEN) hp.areaHistory.shift();
       hp.maxArea = Math.max(...hp.areaHistory);
-      if (hp.maxArea > 20 && hp.area < hp.maxArea * GRAB_THRESHOLD) {
+      if (hp.maxArea > 25 && hp.area < hp.maxArea * GRAB_THRESHOLD) {
         hp.grabbing = true;
       } else {
         hp.grabbing = false;
@@ -1031,7 +1044,6 @@ class CharObj {
     this.idx = idx;
     this.size = 80 + Math.random() * 40;
     this.spawnFromTop = Math.random() > 0.5;
-    // 从屏幕上方或下方云层生成
     const sw = window.innerWidth, sh = window.innerHeight;
     if (this.spawnFromTop) {
       this.x = 30 + Math.random() * (sw - this.size - 60);
@@ -1055,14 +1067,11 @@ class CharObj {
     this.x += this.vx;
     this.y += this.vy;
     this.floatPhase += this.floatSpeed;
-    // 缓慢旋转
     this.angle += this.angleV * 0.3;
     if (Math.abs(this.angle) > 12) this.angleV *= -1;
     const sw = window.innerWidth, sh = window.innerHeight;
-    // 水平边界弹回
     if (this.x < 10) { this.x = 10; this.vx *= -1; }
     if (this.x + this.size > sw - 10) { this.x = sw - this.size - 10; this.vx *= -1; }
-    // 垂直方向不弹回，飘出屏幕后从另一端重新进入
     if (this.spawnFromTop && this.y > sh + this.size + 20) {
       this.y = -this.size - 10 - Math.random() * 50;
       this.x = 30 + Math.random() * (sw - this.size - 60);
@@ -1079,7 +1088,7 @@ class CharObj {
     const floatOffset = Math.sin(this.floatPhase) * 4;
     ctx.translate(this.x + this.size/2, this.y + this.size/2 + floatOffset);
     ctx.rotate(this.angle * Math.PI / 180);
-    ctx.globalAlpha = this.catching ? 0.5 : 1;
+    ctx.globalAlpha = this.catching ? 0.5 : 0.95;
     drawCharToCtx(ctx, this.data.svg, -this.size/2, -this.size/2, this.size, this.size);
     ctx.restore();
   }
@@ -1200,8 +1209,6 @@ function updateUI() {
   document.getElementById('score-display').textContent = score;
   document.getElementById('caught-count').textContent = caughtCount;
   document.getElementById('total-count').textContent = TOTAL;
-
-  // 时间警告样式
   const timerEl = document.getElementById('timer-display');
   timerEl.textContent = timeLeft;
   if (timeLeft <= 10) timerEl.classList.add('warning');
@@ -1228,11 +1235,9 @@ function showCatchToast(charData) {
   const iconEl = document.getElementById('toast-char-icon');
   const nameEl = document.getElementById('toast-char-name');
   const ptsEl = document.getElementById('toast-pts');
-
   iconEl.innerHTML = charData.svg;
   nameEl.textContent = charData.name;
   ptsEl.textContent = '+' + charData.points + '分';
-
   toast.classList.add('show');
   toast.style.display = 'flex';
   setTimeout(() => {
@@ -1252,82 +1257,95 @@ function endGame() {
   const detailEl = document.getElementById('result-detail');
 
   let rank, comment, rankColor;
-  const maxScore = CHARACTERS.reduce((sum, c) => sum + c.points, 0); // 1205
+  const maxScore = CHARACTERS.reduce((sum, c) => sum + c.points, 0);
 
   if (caughtCount >= TOTAL) {
-    // 全部抓到
     if (score >= maxScore * 0.95) {
       rank = '🏆 完美大师！';
-      comment = '太厉害了！你在限定时间内集齐了所有Q版脸谱小人！\n你的反应速度和精准度堪称完美！';
+      comment = '太厉害了！你在限定时间内集齐了所有Q版脸谱小人！你的反应速度和精准度堪称完美！';
       rankColor = '#FFD700';
     } else {
       rank = '🎉 通关达人！';
-      comment = '恭喜你成功集齐所有脸谱角色！\n你是真正的脸谱大师！';
+      comment = '恭喜你成功集齐所有脸谱角色！你是真正的脸谱大师！';
       rankColor = '#FF6B00';
     }
   } else if (caughtCount >= 6) {
     rank = '⭐ 优秀！';
-    comment = '非常棒的表现！你抓住了大部分角色。\n再接再厉，下次争取全部拿下！';
+    comment = '非常棒的表现！你抓住了大部分角色。再接再厉，下次争取全部拿下！';
     rankColor = '#00AA55';
   } else if (caughtCount >= 4) {
     rank = '👍 不错哦！';
-    comment = '表现不错！继续加油，多练习几次就能提高啦~\n记住：握拳要果断！';
+    comment = '表现不错！继续加油，多练习几次就能提高啦~ 记住：握拳要果断！';
     rankColor = '#3399FF';
   } else if (caughtCount >= 2) {
     rank = '💪 继续努力！';
-    comment = '刚开始玩吧？多试几次就能找到感觉了！\n提示：把手移到角色上方再握拳抓取。';
+    comment = '刚开始玩吧？多试几次就能找到感觉了！提示：把手移到角色上方再握拳抓取。';
     rankColor = '#FF9900';
   } else if (caughtCount >= 1) {
     rank = '🌱 初来乍到';
-    comment = '抓住了一个！万事开头难，\n熟悉操作后再来挑战高分吧~';
+    comment = '抓住了一个！万事开头难，熟悉操作后再来挑战高分吧~';
     rankColor = '#999';
   } else {
     rank = '😅 再试一次';
-    comment = '哎呀，时间到啦还没抓到...<br>别灰心，放松心情再来一局！';
+    comment = '哎呀，时间到啦还没抓到...别灰心，放松心情再来一局！';
     rankColor = '#999';
   }
 
   rankEl.textContent = rank;
   rankEl.style.color = rankColor;
-  commentEl.textContent = comment.replace(/\n/g, '<br>');
+  commentEl.innerHTML = comment;
   scoreEl.textContent = score + ' 分';
   scoreEl.style.color = rankColor;
-  detailEl.textContent = `成功抓取 ${caughtCount}/${TOTAL} 个角色 · 用时 ${30 - timeLeft} 秒`;
+  detailEl.textContent = '成功抓取 ' + caughtCount + '/' + TOTAL + ' 个角色 · 用时 ' + (30 - timeLeft) + ' 秒';
 
   resultScreen.style.display = 'flex';
 }
 
 
-// ========== 绘制云层背景 ==========
-function drawCloudLayer(ctx) {
+// ========== 绘制半透明云层背景（叠加在摄像头上方）==========
+function drawCloudOverlay(ctx) {
   const sw = window.innerWidth, sh = window.innerHeight;
 
-  // 上方云层
+  // 半透明渐变天空（让摄像头画面透视）
+  const skyGrad = ctx.createLinearGradient(0, 0, 0, sh);
+  skyGrad.addColorStop(0, 'rgba(135,206,235,0.25)');
+  skyGrad.addColorStop(0.3, 'rgba(184,230,240,0.15)');
+  skyGrad.addColorStop(0.6, 'rgba(200,230,201,0.10)');
+  skyGrad.addColorStop(1, 'rgba(152,216,170,0.20)');
+  ctx.fillStyle = skyGrad;
+  ctx.fillRect(0, 0, sw, sh);
+
+  // 上方云层（半透明）
   ctx.save();
-  ctx.globalAlpha = 0.6;
-  // 绘制几朵静态云
-  drawCloudShape(ctx, sw * 0.1, -15, 1.2);
-  drawCloudShape(ctx, sw * 0.4, -5, 1.0);
-  drawCloudShape(ctx, sw * 0.75, -10, 1.3);
-  drawCloudShape(ctx, sw * 0.9, 0, 0.9);
+  ctx.globalAlpha = 0.45;
+  drawCloudShape(ctx, sw * 0.08, -10, 1.3);
+  drawCloudShape(ctx, sw * 0.35, -5, 1.1);
+  drawCloudShape(ctx, sw * 0.65, -8, 1.4);
+  drawCloudShape(ctx, sw * 0.88, 0, 0.9);
   ctx.restore();
 
-  // 下方草地/街道
-  ctx.fillStyle = 'rgba(120,190,120,0.35)';
-  ctx.fillRect(0, sh - 50, sw, 50);
-  // 草地纹理线
-  ctx.strokeStyle = 'rgba(80,160,80,0.2)';
+  // 下方草地（半透明）
+  ctx.fillStyle = 'rgba(120,190,120,0.22)';
+  ctx.fillRect(0, sh - 45, sw, 45);
+  ctx.strokeStyle = 'rgba(80,160,80,0.12)';
   ctx.lineWidth = 1;
   for (let x = 0; x < sw; x += 30) {
     ctx.beginPath();
-    ctx.moveTo(x, sh - 50);
+    ctx.moveTo(x, sh - 45);
     ctx.lineTo(x + 15, sh);
     ctx.stroke();
   }
+
+  // 边缘虚化暗角效果
+  const vignetteGrad = ctx.createRadialGradient(sw/2, sh/2, sw*0.25, sw/2, sh/2, sw*0.7);
+  vignetteGrad.addColorStop(0, 'rgba(0,0,0,0)');
+  vignetteGrad.addColorStop(1, 'rgba(10,10,30,0.35)');
+  ctx.fillStyle = vignetteGrad;
+  ctx.fillRect(0, 0, sw, sh);
 }
 
 function drawCloudShape(ctx, x, y, scale) {
-  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.fillStyle = 'rgba(255,255,255,0.75)';
   ctx.beginPath();
   ctx.ellipse(x + 30*scale, y + 35*scale, 35*scale, 18*scale, 0, 0, Math.PI * 2);
   ctx.fill();
@@ -1355,7 +1373,6 @@ function drawCaughtIcons(ctx) {
     ctx.save();
     ctx.globalAlpha = 0.9;
     drawCharToCtx(ctx, caughtChars[i].svg, startX - iconSize, y, iconSize, iconSize);
-    // 角落小勾
     ctx.fillStyle = '#00CC66';
     ctx.beginPath();
     ctx.arc(startX - 4, y + iconSize - 4, 7, 0, Math.PI * 2);
@@ -1381,17 +1398,8 @@ function gameLoop() {
   const sw = window.innerWidth, sh = window.innerHeight;
   ctx.clearRect(0, 0, sw, sh);
 
-  // 背景：渐变天空 + 云层
-  const skyGrad = ctx.createLinearGradient(0, 0, 0, sh);
-  skyGrad.addColorStop(0, '#87CEEB');
-  skyGrad.addColorStop(0.5, '#B8E6F0');
-  skyGrad.addColorStop(0.8, '#C8E6C9');
-  skyGrad.addColorStop(1, '#98D8AA');
-  ctx.fillStyle = skyGrad;
-  ctx.fillRect(0, 0, sw, sh);
-
-  // 绘制云层和草地
-  drawCloudLayer(ctx);
+  // 半透明云层背景叠加在摄像头画面上
+  drawCloudOverlay(ctx);
 
   // 肤色检测
   detectSkinBlobs();
@@ -1445,9 +1453,7 @@ async function startGame() {
 }
 
 function _startGameInner() {
-  // 重置结算屏
   document.getElementById('result-screen').style.display = 'none';
-
   document.getElementById('game-ui-bar').style.display = 'flex';
   document.getElementById('hint').style.display = 'block';
 
@@ -1460,12 +1466,11 @@ function _startGameInner() {
   mouseInput.wasDown = false;
   touchPoints = [];
   caughtChars = [];
+  prevFrameData = null;
 
-  // 重置手点
   handPoints = [];
   for (let i = 0; i < MAX_HANDS; i++) handPoints.push(makeHandPoint());
 
-  // 预加载SVG
   CHARACTERS.forEach(c => drawCharToCtx(ctx, c.svg, 0, 0, 1, 1));
 
   updateUI();
